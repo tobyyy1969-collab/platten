@@ -11,6 +11,13 @@ server {
         add_header Cache-Control "no-cache";
     }
 
+    # Einstellungen für die Oberfläche (Spotify Client ID aus der Datei .env)
+    location = /config.json {
+        default_type application/json;
+        add_header Cache-Control "no-store";
+        return 200 '{"spotifyClientId":"${SPOTIFY_CLIENT_ID}"}';
+    }
+
     # Musikserver-Schnittstelle (Subsonic/OpenSubsonic) an Navidrome weiterreichen
     location /rest/ {
         proxy_pass http://navidrome:4533;

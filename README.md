@@ -5,7 +5,10 @@ Eine eigene Oberfläche für deine FLAC-Sammlung auf dem Linux-Homeserver: Cover
 ## So ist es aufgebaut
 
 ```
-Laptop (Browser)  ──►  http://SERVER:8080  ──►  nginx (Plattenregal-Oberfläche)
+Laptop (Browser)  ──►  https://SERVER:8443 (Caddy, für Spotify) / http://SERVER:8080
+                                │
+                                ▼
+                         nginx (Plattenregal-Oberfläche)   ◄──►  Spotify (Web API + Player, direkt aus dem Browser)
                                                    │  /rest/…
                                                    ▼
                                                 Navidrome (Musikserver, liest /music nur lesend)
@@ -15,7 +18,7 @@ Laptop (Browser)  ──►  http://SERVER:8080  ──►  nginx (Plattenregal-
 ```
 
 * **Navidrome** (Open Source) übernimmt das Einlesen der Tags und Cover, die Datenbank, Bewertungen, Favoriten, Playlists und Lyrics. Es scannt neue Alben stündlich und bemerkt Änderungen im Ordner sofort.
-* **Plattenregal** ist die eigene Oberfläche davor. Sie spricht mit Navidrome über die offene Subsonic-Schnittstelle. Später kommt hier Spotify dazu (Schritt 2).
+* **Plattenregal** ist die eigene Oberfläche davor. Sie spricht mit Navidrome über die offene Subsonic-Schnittstelle. Dazu kommt Spotify (siehe unten).
 * Deine Musikdateien werden **nur gelesen**, nie verändert.
 
 ## Installation auf dem Linux-Server
@@ -66,18 +69,49 @@ Hell- und Dunkelmodus folgen der Einstellung deines Laptops.
 
 Wenn ein Album falsch einsortiert ist, Tags korrigieren. Navidrome bemerkt die Änderung von selbst.
 
-## Schritt 2: Spotify (geplant)
+## Spotify einbinden
 
-* Anmeldung mit deinem Spotify-Premium-Konto über die offizielle Spotify-Schnittstelle (Web API) und Wiedergabe im Browser über das Spotify Web Playback SDK.
-* Gemeinsame Bibliothek: deine gespeicherten Spotify-Alben und deine FLACs in einem Raster, je Album mit Quelle „Lokal“ oder „Spotify“.
-* Abgleich: Für jedes eigene Album wird bei Spotify gesucht. Daraus entstehen die Ansichten „Fehlt bei Spotify“ (deine Lücken-Füller) und „Doppelt“. Bei Dopplungen wird die eigene FLAC bevorzugt.
-* Voraussetzung: Spotify verlangt für die Anmeldung und das Abspielen eine **HTTPS-Adresse**. Dafür kommt ein kleiner Caddy-Server mit eigenem Zertifikat dazu; ein Spotify-Entwicklerzugang (kostenlos) ist nötig.
+Deine gespeicherten Spotify-Alben erscheinen zusammen mit deinen FLACs in „Meine Alben“. Gibt es ein Album in beiden, wird es nur einmal gezeigt und deine FLAC abgespielt. Spotify-Titel laufen direkt im Browser über den offiziellen Spotify-Player (Premium nötig).
+
+**Warum HTTPS?** Spotify erlaubt Anmeldung und Wiedergabe nur über eine HTTPS-Adresse. Dafür startet `docker compose` zusätzlich einen kleinen Caddy-Server mit eigenem Zertifikat. Mit Spotify öffnest du Plattenregal deshalb unter **https://SERVER-IP:8443** statt unter http://SERVER-IP:8080.
+
+### Einrichtung (einmalig, ca. 10 Minuten)
+
+1. In der Datei `.env` auf dem Server `SERVER_ADDRESS` auf die Adresse des Servers im Heimnetz setzen (z. B. `192.168.178.20`), dann `docker compose up -d`.
+2. **Zertifikat auf dem Mac vertrauen**, damit der Browser nicht warnt:
+   ```bash
+   # auf dem Server: Zertifikat in den Plattenregal-Ordner kopieren
+   cp ~/plattenregal/data/caddy/caddy/pki/authorities/local/root.crt ~/plattenregal-root.crt
+   ```
+   Die Datei auf den Mac holen (z. B. per `scp`), doppelklicken, in der Schlüsselbundverwaltung auf „Caddy Local Authority“ doppelklicken und unter „Vertrauen“ **Immer vertrauen** wählen. Danach den Browser neu starten.
+3. **Spotify-App anlegen** auf [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard): „Create app“, Name z. B. „Plattenregal“, bei den APIs **Web API** und **Web Playback SDK** ankreuzen. Als **Redirect URI** genau `https://SERVER-IP:8443/` eintragen (mit Schrägstrich am Ende).
+4. Die **Client ID** der App entweder in `.env` als `SPOTIFY_CLIENT_ID` eintragen (dann `docker compose up -d`) oder direkt in Plattenregal auf der Seite **Spotify** einfügen.
+5. In Plattenregal unter **Spotify** auf „Mit Spotify verbinden“ klicken und bei Spotify zustimmen.
+
+### Was dazukommt
+
+| Bereich | Funktionen |
+|---|---|
+| **Meine Alben** | FLACs und Spotify-Alben in einem Raster. Filter „Alle Quellen / Meine FLACs / Bei Spotify / Fehlt bei Spotify“. Spotify-Alben tragen ein grünes Zeichen, FLACs, die es auch bei Spotify gibt, ein dunkles. |
+| **Abgleich** | Sucht jedes deiner Alben bei Spotify (ca. 5–10 Minuten bei 1.000 Alben, läuft im Hintergrund und lässt sich anhalten). Ergebnis: **Fehlt bei Spotify** (deine Lücken-Füller), **Auch bei Spotify** und **In beiden Bibliotheken**. |
+| **Interpret** | Unter „Mehr bei Spotify“ die Alben des Interpreten, die du nicht als FLAC hast. |
+| **Suche** | Findet zusätzlich Alben und Titel bei Spotify. Mit dem Herz speicherst du ein Album in deiner Spotify-Bibliothek. |
+| **Player** | Gemischte Warteschlange: lokale und Spotify-Titel hintereinander. |
+| **Lyrics** | Für Spotify-Titel (und FLACs ohne eigene Lyrics) aus der freien Datenbank [LRCLIB](https://lrclib.net). |
+
+### Gut zu wissen
+
+* Spotify erlaubt eigenen Apps im Entwicklermodus höchstens 5 Benutzer, und das Konto des App-Besitzers braucht Premium. Für dich allein passt das.
+* Nach spätestens 6 Monaten verlangt Spotify eine neue Anmeldung; Plattenregal zeigt dann wieder den Knopf „Mit Spotify verbinden“.
+* Playlists liegen in Navidrome und enthalten deshalb vorerst nur deine FLACs.
+* Die Spotify-Wiedergabe braucht Chrome, Edge, Firefox oder Safari auf dem Laptop; im Browser muss Ton erlaubt sein.
 
 ## Dateien
 
 ```
-docker-compose.yml   Navidrome + Webserver
-nginx.conf           liefert die Oberfläche aus und reicht /rest an Navidrome weiter
+docker-compose.yml   Navidrome + Webserver + HTTPS (Caddy)
+nginx.conf.template  liefert die Oberfläche aus und reicht /rest an Navidrome weiter
+Caddyfile            HTTPS mit eigenem Zertifikat (für Spotify)
 .env.example         Vorlage für deine Einstellungen
 web/                 die Oberfläche (HTML, CSS, JavaScript, ohne Build-Schritt)
 ```
@@ -88,3 +122,6 @@ web/                 die Oberfläche (HTML, CSS, JavaScript, ohne Build-Schritt)
 ![Sampler](docs/screenshots/2-sampler.png)
 ![Interpret mit „Auf Samplern“](docs/screenshots/3-interpret.png)
 ![Lyrics](docs/screenshots/4-lyrics.png)
+![FLACs und Spotify gemeinsam](docs/screenshots/5-gemeinsam.png)
+![Spotify-Album mit Lyrics](docs/screenshots/6-spotify-album.png)
+![Abgleich](docs/screenshots/7-abgleich.png)

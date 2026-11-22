@@ -1,0 +1,16 @@
+# HTTPS im Heimnetz. Spotify erlaubt Anmeldung und Wiedergabe nur über HTTPS.
+# Caddy erzeugt dafür ein eigenes Zertifikat (lokale Zertifizierungsstelle).
+{
+	local_certs
+	skip_install_trust
+	auto_https disable_redirects
+	# Browser schicken bei IP-Adressen keinen Namen mit; dann dieses Zertifikat verwenden
+	default_sni {$SERVER_ADDRESS}
+}
+
+https://{$SERVER_ADDRESS}:8443 {
+	tls internal
+	reverse_proxy web:80 {
+		flush_interval -1
+	}
+}
