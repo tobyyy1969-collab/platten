@@ -2,9 +2,18 @@
 <html lang="de">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Plattenregal</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%23222'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%23e0663a'/%3E%3Ccircle cx='16' cy='16' r='1.5' fill='%23222'/%3E%3C/svg%3E">
+  <!-- Als App installierbar (iPhone: Teilen → Zum Home-Bildschirm, Mac: Chrome → Installieren / Safari → Zum Dock hinzufügen) -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#fbfaf8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#161513" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Plattenregal">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -24,6 +33,13 @@
   </div>
 
   <div id="app" class="app" hidden>
+    <!-- nur auf dem iPhone sichtbar -->
+    <header class="topbar">
+      <button id="btn-menu" class="icon-btn" title="Menü" aria-label="Menü"><svg viewBox="0 0 24 24" class="ico"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button>
+      <div class="brand small-brand"><span class="disc"></span>Plattenregal</div>
+      <button id="btn-search" class="icon-btn" title="Suchen" aria-label="Suchen"><svg viewBox="0 0 24 24" class="ico"><path d="M10.5 4a6.5 6.5 0 0 1 5.2 10.4l4.4 4.4-1.4 1.4-4.4-4.4A6.5 6.5 0 1 1 10.5 4Zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z"/></svg></button>
+    </header>
+    <div id="drawer-backdrop" class="drawer-backdrop"></div>
     <aside class="sidebar">
       <div class="brand"><span class="disc"></span>Plattenregal</div>
       <form id="search-form" class="search">
@@ -35,6 +51,8 @@
         <a href="#/interpreten" data-nav="interpreten">Interpreten</a>
         <a href="#/sampler" data-nav="sampler">Sampler</a>
         <a href="#/favoriten" data-nav="favoriten">Favoriten</a>
+        <a href="#/abgleich" data-nav="abgleich" id="nav-abgleich" hidden>Abgleich</a>
+        <a href="#/spotify" data-nav="spotify" id="nav-spotify">Spotify</a>
       </nav>
       <div class="nav-head">
         <span>Playlists</span>
@@ -59,7 +77,9 @@
     </aside>
 
     <footer id="player" class="player">
-      <div class="np">
+      <button id="np-collapse" class="icon-btn collapse-btn" title="Schließen" aria-label="Player verkleinern"><svg viewBox="0 0 24 24" class="ico"><path d="M7 10l5 5 5-5z"/></svg></button>
+      <div class="np-big"><img id="np-big" alt=""></div>
+      <div class="np" id="np-area">
         <img id="np-cover" alt="" hidden>
         <div class="np-text">
           <a id="np-title" class="np-title"></a>
@@ -80,8 +100,11 @@
           <span id="t-dur" class="time">0:00</span>
         </div>
       </div>
+      <button id="btn-play-mini" class="icon-btn mini-only" title="Abspielen/Pause"><svg viewBox="0 0 24 24" class="ico"><path id="play-path-mini" d="M8 5v14l11-7z"/></svg></button>
+      <button id="btn-next-mini" class="icon-btn mini-only" title="Weiter"><svg viewBox="0 0 24 24" class="ico"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
       <div class="extras">
         <span id="np-format" class="format"></span>
+        <button id="btn-device" class="icon-btn" title="Spotify spielt auf …" hidden><svg viewBox="0 0 24 24" class="ico"><path d="M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm5 9a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm0-9a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z"/></svg></button>
         <button id="btn-lyrics" class="icon-btn" title="Lyrics"><svg viewBox="0 0 24 24" class="ico"><path d="M4 4h16v12H7l-3 3V4Zm3 4v2h10V8H7Zm0 3v2h7v-2H7Z"/></svg></button>
         <button id="btn-queue" class="icon-btn" title="Warteschlange"><svg viewBox="0 0 24 24" class="ico"><path d="M3 6h13v2H3zm0 5h13v2H3zm0 5h9v2H3zm15-1V9l5 4z"/></svg></button>
         <svg viewBox="0 0 24 24" class="ico muted vol-ico"><path d="M4 9h4l5-4v14l-5-4H4V9Zm12.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4Z"/></svg>
@@ -95,5 +118,9 @@
   <dialog id="dialog" class="dialog"></dialog>
 
   <script type="module" src="js/app.js"></script>
+  <script>
+    // Offline-Hülle und schneller Start als App
+    if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('sw.js').catch(() => {});
+  </script>
 </body>
 </html>

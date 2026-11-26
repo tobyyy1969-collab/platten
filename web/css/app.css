@@ -246,18 +246,136 @@ input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 
 .login-card .btn { justify-content: center; margin-top: 4px; height: 42px; }
 .loading { color: var(--muted); padding: 60px 0; }
 
-/* ---------- Kleine Bildschirme ---------- */
+/* ---------- Spotify ---------- */
+:root { --sp: #1aa34a; }
+.cover .b.sp { background: var(--sp); }
+.cover .b.both { background: rgba(20,20,20,.72); color: #7fe0a2; }
+.card .src { display: inline-block; margin-top: 4px; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--sp); font-weight: 600; }
+.format.sp { color: var(--sp); border-color: currentColor; }
+.src-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--sp); margin-right: 6px; vertical-align: 1px; }
+.nav .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--line); margin-left: 6px; vertical-align: 1px; }
+.nav .dot.on { background: var(--sp); }
+.note { margin-top: 16px; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; flex-wrap: wrap; }
+.note .ico { width: 16px; height: 16px; }
+.note a { color: var(--accent); }
+.panel-box { background: var(--bg-elev); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; margin: 0 0 22px; max-width: 760px; }
+.panel-box.warn { border-color: var(--accent); background: var(--accent-soft); }
+.panel-box h3 { font-family: var(--serif); font-weight: 400; font-size: 22px; margin: 0 0 10px; }
+.panel-box .kv { display: flex; justify-content: space-between; gap: 16px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.panel-box .kv span { color: var(--muted); }
+.steps { padding-left: 20px; line-height: 1.6; }
+.steps li { margin-bottom: 6px; }
+.steps a, .panel-box a:not(.btn) { color: var(--accent); }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: var(--bg-hover); padding: 2px 6px; border-radius: 4px; word-break: break-all; }
+.inline-form { display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+.inline-form input { flex: 1; min-width: 220px; height: 38px; border: 1px solid var(--line); border-radius: 8px; padding: 0 12px; background: var(--bg); outline: none; }
+.inline-form input:focus { border-color: var(--accent); }
+.btn[disabled] { opacity: .5; cursor: not-allowed; }
+.small { font-size: 12px; }
+.row-btns { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 6px; }
+a.btn { text-decoration: none; }
+a.chip { text-decoration: none; }
+.match-progress { max-width: 760px; margin: 10px 0 8px; }
+.match-progress:empty { display: none; }
+.bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin: 6px 0; }
+.bar span { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+.lyr-src { font-family: var(--sans); font-size: 11px; color: var(--muted); margin-top: 24px; }
+
+/* ---------- App-Elemente, die nur auf dem iPhone gebraucht werden ---------- */
+.topbar, .drawer-backdrop, .np-big, .collapse-btn, .mini-only { display: none; }
+body { padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+
+/* ---------- Kleine Bildschirme (iPhone) ---------- */
 @media (max-width: 900px) {
-  :root { --side-w: 0px; }
-  .app { grid-template-columns: 1fr; grid-template-areas: "main" "player"; }
-  .sidebar { display: none; }
-  .side-panel { position: fixed; inset: 0 0 var(--player-h) auto; width: min(360px, 100vw); z-index: 20; }
-  .main { padding: 24px 16px 48px; }
-  .player { grid-template-columns: 1fr auto; padding: 0 12px; }
-  .extras { display: none; }
-  .seek { display: none; }
-  .detail-head { flex-direction: column; align-items: flex-start; gap: 20px; }
-  .detail-head .cover { width: min(260px, 70vw); }
-  .grid { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 22px 16px; }
+  :root { --player-h: 64px; }
+  body { padding: 0; }
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr calc(var(--player-h) + env(safe-area-inset-bottom));
+    grid-template-areas: "top" "main" "player";
+    height: 100dvh;
+  }
+  .topbar {
+    grid-area: top; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: calc(env(safe-area-inset-top) + 4px) 8px 4px; background: var(--bg); border-bottom: 1px solid var(--line);
+  }
+  .topbar .brand { padding: 0; font-size: 19px; }
+  .topbar .disc { width: 18px; height: 18px; }
+
+  /* Seitenleiste wird zum ausklappbaren Menü */
+  .sidebar {
+    display: flex; position: fixed; z-index: 40; top: 0; bottom: 0; left: 0; width: min(300px, 84vw);
+    padding-top: calc(env(safe-area-inset-top) + 20px); padding-bottom: calc(env(safe-area-inset-bottom) + 12px);
+    transform: translateX(-105%); transition: transform .22s ease; box-shadow: var(--shadow);
+  }
+  .app.drawer-open .sidebar { transform: none; }
+  .drawer-backdrop { display: block; position: fixed; inset: 0; z-index: 39; background: rgba(0,0,0,.35); opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .app.drawer-open .drawer-backdrop { opacity: 1; pointer-events: auto; }
+  .nav a { padding: 11px 12px; font-size: 16px; }
+  .search input { height: 40px; font-size: 16px; } /* 16px verhindert das Hineinzoomen auf dem iPhone */
+
+  .main { padding: 20px 16px 32px; }
+  .page-title { font-size: 38px; }
+  .toolbar { gap: 8px; margin: 18px 0; }
+  .toolbar .spacer { display: none; }
+  .filter-input { width: 100%; font-size: 16px; height: 38px; }
+  .select { font-size: 15px; }
+  .detail-head { flex-direction: column; align-items: flex-start; gap: 18px; margin-bottom: 22px; }
+  .detail-head .cover { width: min(300px, 78vw); align-self: center; }
+  .detail-head.artist .cover { width: min(200px, 56vw); }
+  .detail-head h1 { font-size: 30px; }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 22px 14px; }
+  .tracks td { padding: 10px 6px; }
   .tracks .al { display: none; }
+  .tracks .x .icon-btn { opacity: 1; }
+  .stars button, .stars svg { width: 16px; height: 16px; }
+  .cover .play-fab { opacity: 1; transform: none; width: 36px; height: 36px; }
+  .cover .overlay { display: none; }
+  .side-panel { position: fixed; inset: 0; width: auto; z-index: 50; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  .toast { bottom: calc(var(--player-h) + env(safe-area-inset-bottom) + 12px); max-width: calc(100vw - 32px); text-align: center; }
+  .dialog { width: calc(100vw - 24px); }
+
+  /* kleiner Player unten */
+  .player {
+    grid-template-columns: 1fr auto auto; gap: 4px; padding: 0 8px env(safe-area-inset-bottom) 10px; position: relative;
+  }
+  .player::before { content: ''; position: absolute; left: 0; top: -1px; height: 2px; width: var(--prog, 0%); background: var(--accent); }
+  .player .transport, .player .extras { display: none; }
+  .player .mini-only { display: inline-grid; width: 44px; height: 44px; }
+  .player .mini-only .ico { width: 26px; height: 26px; }
+  .np img { width: 46px; height: 46px; }
+  .np-title, .np-artist { pointer-events: none; }
+
+  /* großer Player (antippen des kleinen Players) */
+  .player.expanded {
+    position: fixed; inset: 0; z-index: 45; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start;
+    gap: 14px; padding: calc(env(safe-area-inset-top) + 8px) 24px calc(env(safe-area-inset-bottom) + 18px);
+    background: var(--bg); border: 0; overflow-y: auto;
+  }
+  .player.expanded::before { display: none; }
+  .player.expanded .collapse-btn { display: inline-grid; align-self: center; width: 44px; height: 44px; }
+  .player.expanded .collapse-btn .ico { width: 30px; height: 30px; }
+  .player.expanded .np-big { display: block; width: min(100%, 52vh); align-self: center; aspect-ratio: 1; border-radius: 6px; overflow: hidden; box-shadow: var(--shadow); background: var(--line); }
+  .player.expanded .np-big img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .player.expanded .np { margin-top: 6px; }
+  .player.expanded .np img { display: none; }
+  .player.expanded .np-title { font-size: 21px; white-space: normal; }
+  .player.expanded .np-artist { font-size: 16px; white-space: normal; }
+  .player.expanded .np-title, .player.expanded .np-artist { pointer-events: auto; }
+  .player.expanded .mini-only { display: none; }
+  .player.expanded .transport { display: flex; flex-direction: column-reverse; gap: 14px; }
+  .player.expanded .seek { display: flex; max-width: none; }
+  .player.expanded input[type=range]::-webkit-slider-thumb { opacity: 1; }
+  .player.expanded .buttons { justify-content: space-between; width: 100%; max-width: 360px; align-self: center; }
+  .player.expanded .buttons .icon-btn { width: 48px; height: 48px; }
+  .player.expanded .buttons .icon-btn .ico { width: 26px; height: 26px; }
+  .player.expanded .play-btn { width: 68px; height: 68px; }
+  .player.expanded .play-btn .ico { width: 32px; height: 32px; }
+  .player.expanded .extras { display: flex; justify-content: space-around; margin-top: auto; }
+  .player.expanded .extras .icon-btn { width: 48px; height: 48px; }
+  .player.expanded #volume, .player.expanded .vol-ico { display: none; } /* Lautstärke über die iPhone-Tasten */
+}
+
+@media (max-width: 900px) and (display-mode: standalone) {
+  .topbar { border-bottom-color: transparent; }
 }

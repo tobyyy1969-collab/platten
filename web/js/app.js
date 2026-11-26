@@ -1,6 +1,7 @@
 // Plattenregal – Oberfläche für die eigene Musikbibliothek.
 import * as api from './api.js';
 import * as player from './player.js';
+import * as spotify from './spotify.js';
 
 // ---------------------------------------------------------------- Hilfen
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -28,17 +29,26 @@ const ICON = {
   more: '<svg viewBox="0 0 24 24" class="ico"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>',
   star: '<svg viewBox="0 0 24 24"><path d="M12 2.5l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17.4l-6.1 3.5 1.5-6.8L2.2 9.5l6.9-.7z"/></svg>',
   chevron: '<svg viewBox="0 0 24 24" class="ico"><path d="M7 10l5 5 5-5z"/></svg>',
+  stream: '<svg viewBox="0 0 24 24" class="ico"><path d="M3 9.5c5.5-2.6 12.5-2.2 18 .8l-1 1.8c-4.9-2.7-11.2-3-16.2-.8L3 9.5Zm1.6 3.8c4.5-1.9 10.2-1.5 14.6.9l-1 1.7c-3.9-2.1-8.9-2.4-12.8-.8l-.8-1.8Zm1.7 3.7c3.4-1.3 7.4-1 10.6.7l-.9 1.7c-2.7-1.4-6.1-1.7-9-.6L6.3 17Z"/></svg>',
+  disk: '<svg viewBox="0 0 24 24" class="ico"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20Zm0 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>',
   pause: 'M6 5h4v14H6zM14 5h4v14h-4z',
   playPath: 'M8 5v14l11-7z',
 };
 
 // ---------------------------------------------------------------- Zustand
 const lib = {
-  albums: null,          // alle Alben (Reihenfolge = "Nach Interpret" vom Server)
+  albums: null,          // alle lokalen Alben (Reihenfolge = "Nach Interpret" vom Server)
   byId: new Map(),
   artists: null,
   playlists: [],
+  spotify: [],           // gespeicherte Spotify-Alben
+  merged: null,          // gemeinsame Bibliothek (lokal + Spotify, Dopplungen zusammengeführt)
 };
+
+// Ergebnisse des Abgleichs lokal → Spotify: { lokaleAlbumId: { s: spotifyId|null, u: uri, at } }
+const MATCH_KEY = 'plattenregal.spotify.match';
+let matches = (() => { try { return JSON.parse(localStorage.getItem(MATCH_KEY)) || {}; } catch { return {}; } })();
+const saveMatches = () => { try { localStorage.setItem(MATCH_KEY, JSON.stringify(matches)); } catch {} };
 const contexts = new Map(); // Titellisten der aktuellen Seite, damit Klicks die richtige Liste abspielen
 let ctxCounter = 0;
 const putCtx = songs => { const k = 'c' + (++ctxCounter); contexts.set(k, songs); return k; };
@@ -57,10 +67,25 @@ function toast(msg) {
 }
 
 // ---------------------------------------------------------------- Bausteine
-function coverImg(id, size = 300, alt = '') {
-  if (!id) return '';
-  return `<img loading="lazy" decoding="async" src="${esc(api.coverUrl(id, size))}" alt="${esc(alt)}" onload="this.classList.add('loaded')" onerror="this.remove()">`;
+// Bild-Adresse für ein Album oder einen Titel, egal ob lokal oder von Spotify
+function coverFor(item, size = 300) {
+  if (!item) return '';
+  if (item.source === 'spotify') return spotify.imageUrl(item, size);
+  return item.coverArt ? api.coverUrl(item.coverArt, size) : '';
 }
+
+function imgTag(src, alt = '') {
+  if (!src) return '';
+  return `<img loading="lazy" decoding="async" src="${esc(src)}" alt="${esc(alt)}" onload="this.classList.add('loaded')" onerror="this.remove()">`;
+}
+const coverImg = (id, size = 300, alt = '') => id ? imgTag(api.coverUrl(id, size), alt) : '';
+
+// Lokaler Interpret zu einem Namen (für Spotify-Alben, damit der Name auf die eigene Interpretenseite führt)
+let artistByName = new Map();
+const localArtistLink = name => {
+  const id = artistByName.get(spotify.norm(name));
+  return id ? `<a href="#/interpret/${esc(id)}">${esc(name)}</a>` : esc(name);
+};
 
 function starsHtml(id, rating, big = false) {
   let s = `<span class="stars${big ? ' big' : ''}" data-rate-id="${esc(id)}" title="Bewertung">`;
@@ -70,20 +95,25 @@ function starsHtml(id, rating, big = false) {
 
 function albumCard(a) {
   const sampler = isSampler(a);
-  return `<div class="card" data-album="${esc(a.id)}">
+  const sp = a.source === 'spotify';
+  const artistHtml = sampler ? esc('Sampler' + (a.year ? ' · ' + a.year : ''))
+    : sp ? (a.artistNames ?? [a.artist]).map(localArtistLink).join(', ')
+    : a.artistId ? `<a href="#/interpret/${esc(a.artistId)}">${esc(a.artist)}</a>` : esc(a.artist);
+  return `<div class="card${sp ? ' spotify' : ''}" data-album="${esc(a.id)}">
     <div class="cover" data-open="#/album/${esc(a.id)}">
       <div class="ph">${esc((a.name || '?').trim()[0] || '?')}</div>
-      ${coverImg(a.coverArt, 300, a.name)}
+      ${imgTag(coverFor(a, 300), a.name)}
       <div class="overlay"></div>
       <div class="badges">
         ${a.starred ? `<span class="b fav" title="Favorit">${ICON.heart}</span>` : ''}
         ${sampler ? `<span class="b" title="Sampler">${ICON.people}</span>` : ''}
+        ${sp ? `<span class="b sp" title="Von Spotify">${ICON.stream}</span>` : a.onSpotify ? `<span class="b both" title="Als FLAC und bei Spotify">${ICON.stream}</span>` : ''}
       </div>
       <button class="play-fab" data-act="play-album" data-id="${esc(a.id)}" title="Abspielen">${ICON.play}</button>
     </div>
     <a class="t" href="#/album/${esc(a.id)}">${esc(a.name)}</a>
-    ${a.artistId && !sampler ? `<a class="a" href="#/interpret/${esc(a.artistId)}">${esc(a.artist)}</a>` : `<span class="a">${esc(sampler ? 'Sampler' + (a.year ? ' · ' + a.year : '') : a.artist)}</span>`}
-    ${starsHtml(a.id, a.userRating)}
+    <span class="a">${artistHtml}</span>
+    ${sp ? `<span class="src">Spotify</span>` : starsHtml(a.id, a.userRating)}
   </div>`;
 }
 
@@ -115,7 +145,7 @@ function trackTable(songs, opts = {}) {
       rows += `<tr class="disc-row"><td colspan="5">CD ${disc}</td></tr>`;
     }
     const showArtist = opts.showArtist === true || (opts.showArtist !== false && s.artist && s.artist !== opts.albumArtist);
-    const artistHtml = s.artistId ? `<a href="#/interpret/${esc(s.artistId)}">${esc(s.artist)}</a>` : esc(s.artist);
+    const artistHtml = s.artistId ? `<a href="#/interpret/${esc(s.artistId)}">${esc(s.artist)}</a>` : s.source === 'spotify' ? s.artist.split(', ').map(localArtistLink).join(', ') : esc(s.artist);
     rows += `<tr class="row${cur && cur.id === s.id ? ' playing' : ''}" data-ctx="${ctx}" data-i="${i}" data-song="${esc(s.id)}">
       <td class="n">${opts.showAlbum || opts.playlistId ? i + 1 : (s.track || i + 1)}</td>
       <td><div class="ti">${esc(s.title)}</div>${showArtist ? `<div class="ar">${artistHtml}</div>` : ''}</td>
@@ -139,10 +169,55 @@ async function ensureAlbums(force = false) {
     const el = $('#load-progress');
     if (el) el.textContent = `${n.toLocaleString('de-DE')} Alben geladen …`;
   });
-  list.forEach((a, i) => (a._order = i));
+  list.forEach((a, i) => { a._order = i; a.source = 'local'; });
   lib.albums = list;
   lib.byId = new Map(list.map(a => [a.id, a]));
+  artistByName = new Map();
+  for (const a of list) if (a.artistId && !isSampler(a)) artistByName.set(spotify.norm(a.artist), a.artistId);
+  lib.merged = null;
   return list;
+}
+
+// Gemeinsame Bibliothek: lokale Alben haben Vorrang; ein gespeichertes Spotify-Album,
+// das du auch als FLAC hast, erscheint nur einmal (als lokales Album mit Hinweis).
+function mergedAlbums() {
+  if (lib.merged) return lib.merged;
+  const byKey = new Map();
+  for (const a of lib.albums) {
+    a.onSpotify = !!matches[a.id]?.s;
+    a.spotifySaved = null;
+    byKey.set(spotify.albumKey(a.artist, a.name), a);
+  }
+  const matchedIds = new Map(Object.entries(matches).filter(([, m]) => m.s).map(([lid, m]) => [m.s, lid]));
+  const extra = [];
+  for (const sa of lib.spotify) {
+    const local = lib.byId.get(matchedIds.get(sa.spotifyId)) || byKey.get(spotify.albumKey(sa.artist, sa.name));
+    if (local) { local.onSpotify = true; local.spotifySaved = sa; sa.local = local; }
+    else extra.push(sa);
+  }
+  lib.merged = lib.albums.concat(extra);
+  return lib.merged;
+}
+
+// Spotify-Bibliothek laden: erst sofort aus dem Zwischenspeicher, dann im Hintergrund aktualisieren.
+let spotifySync = null;
+async function loadSpotify(force = false) {
+  if (!spotify.isConnected()) { lib.spotify = []; lib.merged = null; return; }
+  const cached = spotify.cachedAlbums();
+  if (cached && !force) {
+    lib.spotify = cached;
+    lib.merged = null;
+    if (Date.now() - (spotify.cachedAt() || 0) < 3600e3) return;
+  }
+  spotifySync ??= spotify.savedAlbums((n, total) => {
+    const el = $('#sp-progress');
+    if (el) el.textContent = `${n.toLocaleString('de-DE')} von ${(total || 0).toLocaleString('de-DE')} Spotify-Alben geladen …`;
+  }).then(list => {
+    lib.spotify = list;
+    lib.merged = null;
+    if (/^#\/(alben|sampler|spotify)?$/.test(location.hash) || location.hash === '') route();
+  }).catch(e => toast('Spotify: ' + e.message)).finally(() => (spotifySync = null));
+  if (!cached || force) await spotifySync;
 }
 
 async function ensureArtists() {
@@ -163,21 +238,25 @@ const albumView = {
   fav: false,
   sampler: pref('samplerMode', 'all'), // all | none | only
   genre: '',
+  source: pref('source', 'all'), // all | local | spotify | missing
 };
 
 const SORTS = {
-  artist: { label: 'Nach Interpret', fn: (a, b) => a._order - b._order },
+  artist: { label: 'Nach Interpret', fn: (a, b) => collator.compare(sortKey(a.artist), sortKey(b.artist)) || (a.year || 0) - (b.year || 0) || collator.compare(a.name, b.name) },
   title: { label: 'Nach Titel', fn: (a, b) => collator.compare(sortKey(a.name), sortKey(b.name)) },
-  year: { label: 'Nach Jahr', fn: (a, b) => (a.year || 9999) - (b.year || 9999) || a._order - b._order },
+  year: { label: 'Nach Jahr', fn: (a, b) => (a.year || 9999) - (b.year || 9999) || collator.compare(sortKey(a.artist), sortKey(b.artist)) },
   added: { label: 'Zuletzt hinzugefügt', fn: (a, b) => String(b.created).localeCompare(String(a.created)) },
-  rating: { label: 'Nach Bewertung', fn: (a, b) => (b.userRating || 0) - (a.userRating || 0) || a._order - b._order },
+  rating: { label: 'Nach Bewertung', fn: (a, b) => (b.userRating || 0) - (a.userRating || 0) || collator.compare(sortKey(a.artist), sortKey(b.artist)) },
   played: { label: 'Zuletzt gespielt', fn: (a, b) => String(b.played || '').localeCompare(String(a.played || '')) },
 };
 
 function filteredAlbums(mode) {
   const v = albumView;
   const q = v.filter.trim().toLowerCase();
-  let list = lib.albums;
+  let list = mergedAlbums();
+  if (v.source === 'local') list = list.filter(a => a.source !== 'spotify');
+  if (v.source === 'spotify') list = list.filter(a => a.source === 'spotify' || a.onSpotify);
+  if (v.source === 'missing') list = list.filter(a => a.source !== 'spotify' && matches[a.id] && !matches[a.id].s);
   if (mode === 'sampler') list = list.filter(isSampler);
   else if (mode === 'favoriten') list = list.filter(a => a.starred);
   else {
@@ -195,9 +274,11 @@ async function renderAlbums(mode = 'alben') {
   if (!lib.albums) main.innerHTML = `<h1 class="page-title">Meine Alben</h1><p class="loading" id="load-progress">Bibliothek wird geladen …</p>`;
   await ensureAlbums();
   if (token !== renderToken) return;
+  const all = mergedAlbums();
+  const checked = Object.keys(matches).length;
 
   const titles = { alben: 'Meine Alben', sampler: 'Sampler', favoriten: 'Favoriten' };
-  const genres = [...new Set(lib.albums.flatMap(a => a.genres?.map(g => g.name) ?? (a.genre ? [a.genre] : [])))].sort(collator.compare);
+  const genres = [...new Set(all.flatMap(a => a.genres?.map(g => g.name) ?? (a.genre ? [a.genre] : [])))].sort(collator.compare);
   const v = albumView;
 
   main.innerHTML = `
@@ -215,6 +296,12 @@ async function renderAlbums(mode = 'alben') {
           <option value="none"${v.sampler === 'none' ? ' selected' : ''}>Ohne Sampler</option>
           <option value="only"${v.sampler === 'only' ? ' selected' : ''}>Nur Sampler</option>
         </select>` : ''}
+      ${spotify.isConnected() ? `<select class="select" id="source" title="Quelle">
+        <option value="all"${v.source === 'all' ? ' selected' : ''}>Alle Quellen</option>
+        <option value="local"${v.source === 'local' ? ' selected' : ''}>Meine FLACs</option>
+        <option value="spotify"${v.source === 'spotify' ? ' selected' : ''}>Bei Spotify</option>
+        ${checked ? `<option value="missing"${v.source === 'missing' ? ' selected' : ''}>Fehlt bei Spotify</option>` : ''}
+      </select>` : ''}
       <select class="select" id="genre" title="Genre">
         <option value="">Alle Genres</option>
         ${genres.map(g => `<option${g === v.genre ? ' selected' : ''}>${esc(g)}</option>`).join('')}
@@ -227,7 +314,9 @@ async function renderAlbums(mode = 'alben') {
 
   const draw = () => {
     const list = filteredAlbums(mode);
-    $('#album-count').textContent = plural(list.length, 'Album', 'Alben') + (list.length !== lib.albums.length ? ` von ${lib.albums.length.toLocaleString('de-DE')}` : '');
+    const nSp = list.filter(a => a.source === 'spotify').length;
+    $('#album-count').textContent = plural(list.length, 'Album', 'Alben') + (list.length !== all.length ? ` von ${all.length.toLocaleString('de-DE')}` : '')
+      + (nSp ? ` · ${(list.length - nSp).toLocaleString('de-DE')} als FLAC, ${nSp.toLocaleString('de-DE')} von Spotify` : '');
     $('#album-grid').innerHTML = list.length ? list.map(albumCard).join('') : `<p class="empty">Keine Alben gefunden.</p>`;
   };
   draw();
@@ -235,6 +324,8 @@ async function renderAlbums(mode = 'alben') {
   $('#sort').onchange = e => { v.sort = e.target.value; setPref('sort', v.sort); draw(); };
   $('#genre').onchange = e => { v.genre = e.target.value; draw(); };
   $('#filter').oninput = e => { v.filter = e.target.value; draw(); };
+  const so = $('#source');
+  if (so) so.onchange = e => { v.source = e.target.value; setPref('source', v.source); draw(); };
   const sm = $('#sampler-mode');
   if (sm) sm.onchange = e => { v.sampler = e.target.value; setPref('samplerMode', v.sampler); draw(); };
   main._redrawAlbums = draw;
@@ -242,10 +333,14 @@ async function renderAlbums(mode = 'alben') {
 
 // ---------------------------------------------------------------- Ansicht: Album
 async function renderAlbum(id) {
+  if (id.startsWith('sp:')) return renderSpotifyAlbum(id.slice(3));
   const token = renderToken;
   main.innerHTML = `<p class="loading">Album wird geladen …</p>`;
   const a = await api.album(id);
   if (token !== renderToken) return;
+  if (lib.albums) mergedAlbums();
+  const la = lib.byId.get(id);
+  const spId = la?.spotifySaved?.spotifyId || matches[id]?.s;
   const songs = a.song ?? [];
   const sampler = isSampler(a);
   const first = songs[0];
@@ -268,6 +363,44 @@ async function renderAlbum(id) {
           <button class="icon-btn" data-act="album-menu" data-ctx="${ctx}" title="Mehr">${ICON.more}</button>
           ${starsHtml(a.id, a.userRating, true)}
         </div>
+        ${spId ? `<div class="note">${ICON.stream} Auch bei Spotify${la?.spotifySaved ? ', in deiner Spotify-Bibliothek' : ''}. Abgespielt wird deine FLAC. <a href="#/album/sp:${esc(spId)}">Spotify-Version ansehen</a></div>`
+          : matches[id] && !matches[id].s ? `<div class="note">${ICON.disk} Fehlt bei Spotify – dieses Album hast nur du.</div>` : ''}
+      </div>
+    </div>
+    ${trackTable(songs, { albumArtist: sampler ? null : a.artist, showArtist: sampler ? true : 'auto' })}`;
+}
+
+// ---------------------------------------------------------------- Ansicht: Spotify-Album
+async function renderSpotifyAlbum(spId) {
+  const token = renderToken;
+  if (!spotify.isConnected()) { main.innerHTML = `<p class="empty">Bitte zuerst <a href="#/spotify">mit Spotify verbinden</a>.</p>`; return; }
+  main.innerHTML = `<p class="loading">Album wird von Spotify geladen …</p>`;
+  const [a] = await Promise.all([spotify.album(spId), lib.albums ? null : ensureAlbums()]);
+  if (token !== renderToken) return;
+  mergedAlbums();
+  const saved = lib.spotify.some(x => x.spotifyId === spId);
+  const localEntry = Object.entries(matches).find(([, m]) => m.s === spId)?.[0];
+  const local = lib.byId.get(localEntry) || lib.albums.find(l => spotify.albumKey(l.artist, l.name) === spotify.albumKey(a.artist, a.name));
+  const sampler = isSampler(a);
+  const songs = a.song;
+  const discs = new Set(songs.map(s => s.discNumber || 1)).size;
+  const ctx = putCtx(songs);
+  main.innerHTML = `
+    <div class="detail-head">
+      <div class="cover">${imgTag(spotify.imageUrl(a, 640), a.name)}</div>
+      <div>
+        <div class="kind">${sampler ? 'Sampler' : 'Album'} · Spotify</div>
+        <h1>${esc(a.name)}</h1>
+        <div class="by">${sampler ? esc(a.artist) : a.artistNames.map(localArtistLink).join(', ')}</div>
+        <div class="meta">${[a.year, plural(songs.length, 'Titel', 'Titel'), discs > 1 ? `${discs} CDs` : '', fmtTotal(a.duration), a.label].filter(Boolean).map(esc).join(' · ')} <span class="format">SPOTIFY</span></div>
+        <div class="actions">
+          <button class="btn primary" data-act="play-ctx" data-ctx="${ctx}">${ICON.play} Abspielen</button>
+          <button class="btn" data-act="shuffle-ctx" data-ctx="${ctx}">${ICON.shuffle} Zufällig</button>
+          <button class="icon-btn${saved ? ' on' : ''}" data-act="sp-save" data-uri="${esc(a.uri)}" title="${saved ? 'Aus Spotify-Bibliothek entfernen' : 'In Spotify-Bibliothek speichern'}">${saved ? ICON.heart : ICON.heartO}</button>
+          <button class="icon-btn" data-act="album-menu" data-ctx="${ctx}" title="Mehr">${ICON.more}</button>
+          <a class="link-btn" href="https://open.spotify.com/album/${esc(spId)}" target="_blank" rel="noopener">In Spotify öffnen ↗</a>
+        </div>
+        ${local ? `<div class="note">${ICON.disk} Du hast dieses Album auch als FLAC. <a href="#/album/${esc(local.id)}">Zur eigenen Version</a></div>` : ''}
       </div>
     </div>
     ${trackTable(songs, { albumArtist: sampler ? null : a.artist, showArtist: sampler ? true : 'auto' })}`;
@@ -333,11 +466,37 @@ async function renderArtist(id) {
     ${samplers.length ? `<h2 class="section-title">Auf Samplern</h2><div id="sampler-tracks"><p class="loading" style="padding:10px 0">Titel werden gesucht …</p></div>
       <h2 class="section-title" style="font-size:20px">Diese Sampler</h2><div class="grid">${samplers.map(albumCard).join('')}</div>` : ''}`;
 
+  if (spotify.isConnected()) main.insertAdjacentHTML('beforeend', `<div id="sp-artist"></div>`);
   if (samplers.length) {
     const songs = await artistSamplerSongs(id, samplers);
     if (token !== renderToken) return;
     $('#sampler-tracks').innerHTML = songs.length ? trackTable(songs, { showAlbum: true, showArtist: false }) : '<p class="muted">Keine Titel gefunden.</p>';
   }
+  if (spotify.isConnected()) {
+    try {
+      const more = await spotifyArtistAlbums(ar.name, own);
+      if (token !== renderToken || !more.length) return;
+      $('#sp-artist').innerHTML = `<h2 class="section-title">Mehr bei Spotify</h2>
+        <p class="muted" style="margin:-8px 0 18px">Alben von ${esc(ar.name)}, die du nicht als FLAC hast.</p>
+        <div class="grid">${more.map(albumCard).join('')}</div>`;
+    } catch (e) { console.warn(e); }
+  }
+}
+
+// Spotify-Alben eines Interpreten, ohne die, die du schon als FLAC hast
+async function spotifyArtistAlbums(name, ownAlbums) {
+  const d = await spotify.search(`artist:${name}`, 'artist', 5);
+  const hit = (d.artists?.items ?? []).find(x => spotify.norm(x.name) === spotify.norm(name));
+  if (!hit) return [];
+  const list = await spotify.artistAlbums(hit.id);
+  const ownKeys = new Set(ownAlbums.map(a => spotify.norm(a.name)));
+  const seen = new Set();
+  return list.filter(a => {
+    const k = spotify.norm(a.name);
+    if (ownKeys.has(k) || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 async function artistSamplerSongs(artistId, samplers) {
@@ -402,7 +561,164 @@ async function renderSearch(q) {
     ${artists.length ? `<h2 class="section-title">Interpreten</h2><div class="grid">${artists.map(artistCard).join('')}</div>` : ''}
     ${albums.length ? `<h2 class="section-title">Alben</h2><div class="grid">${albums.map(albumCard).join('')}</div>` : ''}
     ${songs.length ? `<h2 class="section-title">Titel</h2>${trackTable(songs, { showAlbum: true, showArtist: true })}` : ''}
-    ${!artists.length && !albums.length && !songs.length ? '<p class="empty">Nichts gefunden.</p>' : ''}`;
+    ${!artists.length && !albums.length && !songs.length ? '<p class="empty">Nichts in deinen FLACs gefunden.</p>' : ''}
+    ${spotify.isConnected() ? '<div id="sp-search"><h2 class="section-title">Bei Spotify</h2><p class="loading" style="padding:0">Suche läuft …</p></div>' : ''}`;
+  if (spotify.isConnected()) {
+    try {
+      const d = await spotify.search(q, 'album,track', 10);
+      if (token !== renderToken) return;
+      const spAlbums = (d.albums?.items ?? []).filter(Boolean).map(x => spotify.toAlbum(x));
+      const spTracks = (d.tracks?.items ?? []).filter(Boolean).map(t => spotify.toTrack(t));
+      $('#sp-search').innerHTML = `<h2 class="section-title">Bei Spotify</h2>
+        ${spAlbums.length ? `<div class="grid">${spAlbums.map(albumCard).join('')}</div>` : ''}
+        ${spTracks.length ? `<h2 class="section-title" style="font-size:20px">Titel bei Spotify</h2>${trackTable(spTracks, { showAlbum: true, showArtist: true })}` : ''}
+        ${!spAlbums.length && !spTracks.length ? '<p class="empty">Auch bei Spotify nichts gefunden.</p>' : ''}`;
+    } catch (e) {
+      $('#sp-search').innerHTML = `<p class="error">Spotify-Suche fehlgeschlagen: ${esc(e.message)}</p>`;
+    }
+  }
+}
+
+// ---------------------------------------------------------------- Ansicht: Spotify (Verbindung)
+async function renderSpotify() {
+  const token = renderToken;
+  const connected = spotify.isConnected();
+  const httpsHint = !spotify.secureOk()
+    ? `<div class="panel-box warn"><b>Spotify braucht die HTTPS-Adresse.</b> Öffne Plattenregal über <code>https://${esc(location.hostname)}:8443</code>. Über die normale http-Adresse lässt Spotify keine Anmeldung und keine Wiedergabe zu.<br><br>Damit dein Gerät der Adresse vertraut, installiere einmal das <a href="zertifikat.crt">Plattenregal-Zertifikat</a> (Anleitung im README).</div>` : '';
+  let user = null;
+  if (connected) { try { user = await spotify.me(); } catch (e) { toast('Spotify: ' + e.message); } }
+  if (token !== renderToken) return;
+  await ensureAlbums();
+  if (token !== renderToken) return;
+  mergedAlbums();
+  const both = lib.spotify.filter(a => a.local).length;
+
+  main.innerHTML = `
+    <h1 class="page-title">Spotify</h1>
+    <p class="page-sub">Deine Spotify-Alben erscheinen zusammen mit deinen FLACs in „Meine Alben“. Gibt es ein Album in beiden, spielt Plattenregal deine FLAC.</p>
+    ${httpsHint}
+    ${connected ? `
+      <div class="panel-box">
+        <div class="kv"><span>Verbunden als</span><b>${esc(user?.display_name || user?.id || '–')}</b></div>
+        <div class="kv"><span>Gespeicherte Spotify-Alben</span><b>${lib.spotify.length.toLocaleString('de-DE')}</b></div>
+        <div class="kv"><span>Davon auch als FLAC vorhanden</span><b>${both.toLocaleString('de-DE')}</b></div>
+        <div class="kv"><span>Zuletzt geladen</span><b>${spotify.cachedAt() ? new Date(spotify.cachedAt()).toLocaleString('de-DE') : '–'}</b></div>
+        <div class="kv"><span>Wiedergabe</span><b>${spotify.playbackMode() === 'connect'
+          ? `über die Spotify-App · ${esc(spotify.chosenDevice()?.name || 'Gerät wird beim ersten Abspielen gewählt')} <button class="link-btn" data-act="sp-device">ändern</button>`
+          : 'direkt hier im Browser'}</b></div>
+        <p id="sp-progress" class="muted"></p>
+        <div class="row-btns">
+          <button class="btn primary" data-act="sp-reload">Spotify-Bibliothek neu laden</button>
+          <a class="btn" href="#/abgleich">Zum Abgleich</a>
+          <button class="btn" data-act="sp-logout">Trennen</button>
+        </div>
+      </div>` : `
+      <div class="panel-box">
+        <h3>Einmalig einrichten</h3>
+        <ol class="steps">
+          <li>Auf <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">developer.spotify.com/dashboard</a> mit deinem Spotify-Konto anmelden und „Create app“ wählen.</li>
+          <li>Name z. B. „Plattenregal“, bei „Which API/SDKs“ <b>Web API</b> und <b>Web Playback SDK</b> ankreuzen.</li>
+          <li>Als <b>Redirect URI</b> genau diese Adresse eintragen:<br><code class="copy">${esc(spotify.redirectUri())}</code></li>
+          <li>Speichern, dann die <b>Client ID</b> kopieren und hier einfügen:</li>
+        </ol>
+        <form id="sp-form" class="inline-form">
+          <input type="text" id="sp-client" placeholder="Client ID" value="${esc(spotify.getClientId())}" autocomplete="off" spellcheck="false">
+          <button class="btn primary" ${spotify.secureOk() ? '' : 'disabled title="Nur über HTTPS möglich"'}>Mit Spotify verbinden</button>
+        </form>
+        <p class="muted small">Die Client ID ist kein Geheimnis. Alternativ kannst du sie als SPOTIFY_CLIENT_ID in der Datei .env auf dem Server eintragen.</p>
+      </div>`}`;
+
+  const form = $('#sp-form');
+  if (form) form.onsubmit = async e => {
+    e.preventDefault();
+    const id = $('#sp-client').value.trim();
+    if (!id) return toast('Bitte die Client ID eintragen');
+    spotify.setClientId(id);
+    try { await spotify.login(); } catch (err) { toast(err.message); }
+  };
+}
+
+// ---------------------------------------------------------------- Ansicht: Abgleich lokal ↔ Spotify
+const matcher = { running: false, stop: false, done: 0, total: 0, current: '' };
+
+async function runMatcher() {
+  if (matcher.running) return;
+  await ensureAlbums();
+  const todo = lib.albums.filter(a => !matches[a.id]);
+  Object.assign(matcher, { running: true, stop: false, done: 0, total: todo.length, current: '' });
+  updateMatcherUi();
+  for (const a of todo) {
+    if (matcher.stop || !spotify.isConnected()) break;
+    matcher.current = `${a.artist} – ${a.name}`;
+    updateMatcherUi();
+    try {
+      const m = await spotify.findAlbum(a);
+      matches[a.id] = m ? { s: m.spotifyId, u: m.uri, at: Date.now() } : { s: null, at: Date.now() };
+    } catch (e) {
+      toast('Abgleich unterbrochen: ' + e.message);
+      break;
+    }
+    matcher.done++;
+    if (matcher.done % 10 === 0) saveMatches();
+    await new Promise(r => setTimeout(r, 150)); // Spotify nicht überlasten
+  }
+  saveMatches();
+  lib.merged = null;
+  matcher.running = false;
+  matcher.current = '';
+  updateMatcherUi();
+  if (location.hash.startsWith('#/abgleich')) route();
+}
+
+function updateMatcherUi() {
+  const el = $('#match-progress');
+  if (!el) return;
+  const pct = matcher.total ? Math.round(100 * matcher.done / matcher.total) : 0;
+  el.innerHTML = matcher.running
+    ? `<div class="bar"><span style="width:${pct}%"></span></div>
+       <p class="muted">${matcher.done.toLocaleString('de-DE')} von ${matcher.total.toLocaleString('de-DE')} Alben geprüft · ${esc(matcher.current)}</p>
+       <button class="btn" data-act="match-stop">Anhalten</button>`
+    : '';
+}
+
+async function renderAbgleich(tab) {
+  const token = renderToken;
+  if (!spotify.isConnected()) { main.innerHTML = `<h1 class="page-title">Abgleich</h1><p class="empty">Bitte zuerst <a href="#/spotify">mit Spotify verbinden</a>.</p>`; return; }
+  await ensureAlbums();
+  if (token !== renderToken) return;
+  mergedAlbums();
+  const local = lib.albums;
+  const checked = local.filter(a => matches[a.id]);
+  const missing = checked.filter(a => !matches[a.id].s);
+  const found = checked.filter(a => matches[a.id].s);
+  const inBoth = local.filter(a => a.spotifySaved);
+  const open = local.length - checked.length;
+  tab ||= 'fehlt';
+  const lists = { fehlt: missing, vorhanden: found, doppelt: inBoth };
+  const list = (lists[tab] ?? missing).slice().sort(SORTS.artist.fn);
+  const texts = {
+    fehlt: 'Diese Alben gibt es bei Spotify nicht (oder sie wurden nicht gefunden). Sie füllen die Lücken in deinem Spotify-Katalog.',
+    vorhanden: 'Diese Alben hast du als FLAC und es gibt sie auch bei Spotify. Abgespielt wird immer deine FLAC.',
+    doppelt: 'Diese Alben sind als FLAC und in deiner Spotify-Bibliothek gespeichert. In „Meine Alben“ erscheinen sie nur einmal.',
+  };
+
+  main.innerHTML = `
+    <h1 class="page-title">Abgleich</h1>
+    <p class="page-sub">${checked.length.toLocaleString('de-DE')} von ${local.length.toLocaleString('de-DE')} eigenen Alben mit Spotify verglichen${open ? ` · ${open.toLocaleString('de-DE')} noch offen` : ''}</p>
+    <div class="row-btns">
+      ${open ? `<button class="btn primary" data-act="match-start" ${matcher.running ? 'disabled' : ''}>${checked.length ? 'Abgleich fortsetzen' : 'Abgleich starten'}</button>` : ''}
+      ${checked.length ? `<button class="btn" data-act="match-reset">Neu abgleichen</button>` : ''}
+    </div>
+    <div id="match-progress" class="match-progress"></div>
+    ${open && !checked.length ? `<p class="muted">Der Abgleich sucht jedes deiner Alben bei Spotify. Bei ca. 1.000 Alben dauert das etwa 5 bis 10 Minuten. Du kannst währenddessen weiter Musik hören; das Ergebnis bleibt gespeichert.</p>` : ''}
+    <div class="toolbar">
+      <a class="chip${tab === 'fehlt' ? ' on' : ''}" href="#/abgleich/fehlt">${ICON.disk} Fehlt bei Spotify · ${missing.length.toLocaleString('de-DE')}</a>
+      <a class="chip${tab === 'vorhanden' ? ' on' : ''}" href="#/abgleich/vorhanden">${ICON.stream} Auch bei Spotify · ${found.length.toLocaleString('de-DE')}</a>
+      <a class="chip${tab === 'doppelt' ? ' on' : ''}" href="#/abgleich/doppelt">In beiden Bibliotheken · ${inBoth.length.toLocaleString('de-DE')}</a>
+    </div>
+    <p class="muted" style="margin:-8px 0 22px">${texts[tab]}</p>
+    <div class="grid">${list.length ? list.map(albumCard).join('') : '<p class="empty">Noch nichts hier.</p>'}</div>`;
+  updateMatcherUi();
 }
 
 // ---------------------------------------------------------------- Router
@@ -414,6 +730,8 @@ function highlightNav() {
 async function route() {
   renderToken++;
   closeMenu();
+  $('#app').classList.remove('drawer-open');
+  $('#player').classList.remove('expanded');
   highlightNav();
   const h = decodeURIComponent(location.hash.replace(/^#\/?/, ''));
   const [view, ...rest] = h.split('/');
@@ -429,6 +747,8 @@ async function route() {
       case 'interpret': await renderArtist(arg); break;
       case 'playlist': await renderPlaylist(arg); break;
       case 'suche': await renderSearch(arg); break;
+      case 'spotify': await renderSpotify(); break;
+      case 'abgleich': await renderAbgleich(arg); break;
       default: location.hash = '#/alben';
     }
   } catch (e) {
@@ -470,7 +790,11 @@ function chooseNamePrompt(title, initial = '') {
   });
 }
 
-async function addToPlaylistDialog(songs) {
+async function addToPlaylistDialog(allSongs) {
+  // Playlists liegen in Navidrome und können deshalb nur eigene FLACs enthalten.
+  const songs = allSongs.filter(s => s.source !== 'spotify');
+  if (!songs.length) return toast('Spotify-Titel können noch nicht in Playlists gespeichert werden');
+  if (songs.length < allSongs.length) toast('Hinweis: Spotify-Titel werden nicht in die Playlist übernommen');
   if (!lib.playlists.length) await refreshPlaylists().catch(() => {});
   dialog.className = 'dialog';
   dialog.innerHTML = `<h3>Zu Playlist hinzufügen</h3>
@@ -507,9 +831,12 @@ function songMenuItems(songs, label = 'Titel') {
 }
 
 // ---------------------------------------------------------------- Aktionen
+const albumSongs = async a => (a.source === 'spotify' || String(a.id).startsWith('sp:'))
+  ? (await spotify.album(a.spotifyId || String(a.id).slice(3))).song
+  : (await api.album(a.id)).song ?? [];
+
 async function playAlbum(id, shuffle = false) {
-  const a = await api.album(id);
-  let songs = a.song ?? [];
+  let songs = await albumSongs({ id });
   if (shuffle) songs = songs.slice().sort(() => Math.random() - .5);
   player.playList(songs);
 }
@@ -517,10 +844,12 @@ async function playAlbum(id, shuffle = false) {
 async function playRandomFrom(albums, n = 12) {
   if (!albums.length) return;
   const pick = albums.slice().sort(() => Math.random() - .5).slice(0, n);
-  const songs = (await Promise.all(pick.map(a => api.album(a.id)))).flatMap(a => a.song ?? []);
+  const songs = (await Promise.all(pick.map(a => albumSongs(a).catch(() => [])))).flatMap(x => x);
   player.playList(songs.sort(() => Math.random() - .5));
   toast(`Zufallsmix aus ${plural(pick.length, 'Album', 'Alben')}`);
 }
+
+const matchesCount = () => Object.keys(matches).length;
 
 function currentGridAlbums() {
   const h = location.hash.replace(/^#\/?/, '');
@@ -566,6 +895,8 @@ document.addEventListener('click', async e => {
           { label: 'Zufälliges Album', run: () => { const l = currentGridAlbums(); if (l.length) playAlbum(l[Math.floor(Math.random() * l.length)].id); } },
           { label: 'Zufallsmix nur aus Samplern', run: () => playRandomFrom(lib.albums.filter(isSampler)) },
           { label: 'Zufallsmix aus 4–5-Sterne-Alben', run: () => playRandomFrom(lib.albums.filter(a => a.userRating >= 4)) },
+          { label: 'Zufallsmix nur aus meinen FLACs', run: () => playRandomFrom(currentGridAlbums().filter(a => a.source !== 'spotify')) },
+          matchesCount() && { label: 'Zufallsmix: nur was Spotify nicht hat', run: () => playRandomFrom(lib.albums.filter(a => matches[a.id] && !matches[a.id].s)) },
         ]); break;
         case 'toggle-fav': albumView.fav = !albumView.fav; route(); break;
         case 'toggle-artists-all': setPref('artistsAll', !pref('artistsAll', false)); route(); break;
@@ -599,7 +930,7 @@ document.addEventListener('click', async e => {
           const s = songs[+d.i];
           openMenu(act, [
             ...songMenuItems([s]),
-            { label: s.starred ? 'Aus Favoriten entfernen' : 'Als Favorit markieren', run: async () => {
+            s.source !== 'spotify' && { label: s.starred ? 'Aus Favoriten entfernen' : 'Als Favorit markieren', run: async () => {
               await api.star({ id: s.id }, !s.starred);
               s.starred = s.starred ? undefined : new Date().toISOString();
               act.classList.toggle('on', !!s.starred);
@@ -622,6 +953,21 @@ document.addEventListener('click', async e => {
           dialog.showModal();
           dialog.onclick = () => dialog.close();
           break;
+        case 'sp-save': {
+          const on = !act.classList.contains('on');
+          await spotify.saveAlbum(d.uri, on);
+          act.classList.toggle('on', on);
+          act.innerHTML = on ? ICON.heart : ICON.heartO;
+          toast(on ? 'In deiner Spotify-Bibliothek gespeichert' : 'Aus deiner Spotify-Bibliothek entfernt');
+          loadSpotify(true);
+          break;
+        }
+        case 'sp-device': await deviceMenu(act); break;
+        case 'sp-reload': await loadSpotify(true); toast('Spotify-Bibliothek aktualisiert'); route(); break;
+        case 'sp-logout': spotify.logout(); lib.spotify = []; lib.merged = null; updateSpotifyNav(); route(); break;
+        case 'match-start': runMatcher(); break;
+        case 'match-stop': matcher.stop = true; break;
+        case 'match-reset': if (confirm('Alle Abgleich-Ergebnisse verwerfen und neu suchen?')) { matches = {}; saveMatches(); lib.merged = null; route(); runMatcher(); } break;
         case 'q-jump': player.jump(+d.i); break;
         case 'q-remove': player.removeAt(+d.i); break;
         case 'q-clear': player.clearQueue(); break;
@@ -660,19 +1006,26 @@ function renderNowPlaying() {
   const s = player.current();
   const img = $('#np-cover');
   if (!s) { img.hidden = true; $('#np-title').textContent = ''; $('#np-artist').textContent = ''; $('#np-format').textContent = ''; return; }
-  img.hidden = !s.coverArt;
-  if (s.coverArt) img.src = api.coverUrl(s.coverArt, 120);
+  const src = coverFor(s, 120);
+  img.hidden = !src;
+  if (src) img.src = src;
+  const big = coverFor(s, 640);
+  if (big) $('#np-big').src = big; else $('#np-big').removeAttribute('src');
   $('#np-title').textContent = s.title;
   $('#np-title').href = '#/album/' + s.albumId;
   $('#np-artist').textContent = s.artist + (s.album ? ' — ' + s.album : '');
-  $('#np-artist').href = s.artistId ? '#/interpret/' + s.artistId : '#/album/' + s.albumId;
-  $('#np-format').textContent = [(s.suffix || '').toUpperCase(), s.bitDepth && s.samplingRate ? `${s.bitDepth}/${(s.samplingRate / 1000).toLocaleString('de-DE')}` : ''].filter(Boolean).join(' ');
+  const localArtist = s.artistId || artistByName.get(spotify.norm(s.artist.split(', ')[0]));
+  $('#np-artist').href = localArtist ? '#/interpret/' + localArtist : '#/album/' + s.albumId;
+  $('#np-format').textContent = s.source === 'spotify' ? 'SPOTIFY' : [(s.suffix || '').toUpperCase(), s.bitDepth && s.samplingRate ? `${s.bitDepth}/${(s.samplingRate / 1000).toLocaleString('de-DE')}` : ''].filter(Boolean).join(' ');
+  $('#np-format').classList.toggle('sp', s.source === 'spotify');
   img.onclick = () => (location.hash = '#/album/' + s.albumId);
   document.title = `${s.title} · ${s.artist} – Plattenregal`;
 }
 
 function renderState() {
   $('#play-path').setAttribute('d', player.isPlaying() ? ICON.pause : ICON.playPath);
+  $('#play-path-mini').setAttribute('d', player.isPlaying() ? ICON.pause : ICON.playPath);
+  updateDeviceButton();
   const st = player.settings();
   $('#btn-shuffle').classList.toggle('on', st.shuffle);
   $('#btn-repeat').classList.toggle('on', st.repeat !== 'off');
@@ -680,35 +1033,68 @@ function renderState() {
 }
 
 function renderTime() {
-  const a = player.audioEl;
-  const dur = a.duration || player.current()?.duration || 0;
-  $('#t-cur').textContent = fmtTime(a.currentTime);
+  const pos = player.position();
+  const dur = player.duration();
+  $('#t-cur').textContent = fmtTime(pos);
   $('#t-dur').textContent = fmtTime(dur);
-  if (!seeking) { seekEl.value = dur ? Math.round(1000 * a.currentTime / dur) : 0; setRangeFill(seekEl); }
+  if (!seeking) { seekEl.value = dur ? Math.round(1000 * pos / dur) : 0; setRangeFill(seekEl); }
+  $('#player').style.setProperty('--prog', (dur ? Math.min(100, 100 * pos / dur) : 0) + '%');
   if (panel === 'lyrics') syncLyrics();
 }
 
-seekEl.addEventListener('input', () => { seeking = true; setRangeFill(seekEl); const dur = player.audioEl.duration || 0; $('#t-cur').textContent = fmtTime(dur * seekEl.value / 1000); });
-seekEl.addEventListener('change', () => { player.seek((player.audioEl.duration || 0) * seekEl.value / 1000); seeking = false; });
+seekEl.addEventListener('input', () => { seeking = true; setRangeFill(seekEl); const dur = player.duration(); $('#t-cur').textContent = fmtTime(dur * seekEl.value / 1000); });
+seekEl.addEventListener('change', () => { player.seek(player.duration() * seekEl.value / 1000); seeking = false; });
 volEl.value = player.audioEl.volume; setRangeFill(volEl);
 volEl.addEventListener('input', () => { player.setVolume(+volEl.value); setRangeFill(volEl); });
 $('#btn-play').onclick = () => player.toggle();
+$('#btn-play-mini').onclick = e => { e.stopPropagation(); player.toggle(); };
+$('#btn-next-mini').onclick = e => { e.stopPropagation(); player.next(); };
+
+// ---------------------------------------------------------------- iPhone: Menü und großer Player
+const appEl = $('#app');
+$('#btn-menu').onclick = () => appEl.classList.toggle('drawer-open');
+$('#drawer-backdrop').onclick = () => appEl.classList.remove('drawer-open');
+$('#btn-search').onclick = () => { appEl.classList.add('drawer-open'); setTimeout(() => $('#search-input').focus(), 250); };
+const isSmall = () => matchMedia('(max-width: 900px)').matches;
+$('#np-area').addEventListener('click', e => {
+  if (!isSmall() || !player.current()) return;
+  if (!$('#player').classList.contains('expanded')) { e.preventDefault(); $('#player').classList.add('expanded'); }
+});
+$('#np-collapse').onclick = () => $('#player').classList.remove('expanded');
+$('#np-big').onclick = () => $('#player').classList.remove('expanded');
+
+// Spotify-Wiedergabegerät (iPhone: Spotify-App über Spotify Connect)
+function updateDeviceButton() {
+  const show = spotify.isConnected() && spotify.playbackMode() === 'connect';
+  const b = $('#btn-device');
+  b.hidden = !show;
+  if (show) b.title = 'Spotify spielt auf: ' + (spotify.chosenDevice()?.name || 'noch kein Gerät gewählt');
+}
+async function deviceMenu(anchor) {
+  let list = [];
+  try { list = await spotify.devices(); } catch (e) { return toast('Spotify: ' + e.message); }
+  const cur = spotify.chosenDevice();
+  if (!list.length) return toast('Keine Spotify-App gefunden. Öffne kurz die Spotify-App, dann noch einmal versuchen.');
+  openMenu(anchor, list.map(d => ({ label: `${d.id === cur?.id ? '✓ ' : ''}${d.name} (${d.type})`, run: () => { spotify.chooseDevice(d); updateDeviceButton(); toast('Spotify spielt jetzt auf ' + d.name); } })));
+}
+$('#btn-device').onclick = e => deviceMenu(e.currentTarget);
 $('#btn-next').onclick = () => player.next();
 $('#btn-prev').onclick = () => player.prev();
 $('#btn-shuffle').onclick = () => player.toggleShuffle();
 $('#btn-repeat').onclick = () => player.cycleRepeat();
 
-player.on(what => {
+player.on((what, detail) => {
   if (what === 'track') { renderNowPlaying(); markPlaying(); renderState(); if (panel) renderPanel(); }
   if (what === 'queue' && panel === 'queue') renderPanel();
   if (what === 'state') renderState();
   if (what === 'time') renderTime();
-  if (what === 'error') toast('Titel konnte nicht abgespielt werden');
+  if (what === 'error') toast(detail || 'Titel konnte nicht abgespielt werden');
 });
 
 document.addEventListener('keydown', e => {
   if (e.target.closest('input, textarea, select, dialog')) return;
   if (e.code === 'Space') { e.preventDefault(); player.toggle(); }
+  if (e.key === 'Escape') { $('#player').classList.remove('expanded'); appEl.classList.remove('drawer-open'); }
   if (e.code === 'ArrowRight' && e.shiftKey) player.next();
   if (e.code === 'ArrowLeft' && e.shiftKey) player.prev();
   if (e.key === '/') { e.preventDefault(); $('#search-input').focus(); }
@@ -737,8 +1123,8 @@ function renderPanel() {
     const q = player.queue(), cur = player.index();
     if (!q.length) { body.innerHTML = '<p class="empty">Die Warteschlange ist leer.</p>'; return; }
     const item = (s, i) => `<div class="q-item${i === cur ? ' current' : ''}${i < cur ? ' past' : ''}" data-act="q-jump" data-i="${i}">
-      ${s.coverArt ? `<img src="${esc(api.coverUrl(s.coverArt, 80))}" alt="" loading="lazy">` : '<span class="noimg"></span>'}
-      <div class="txt"><div class="tt">${esc(s.title)}</div><div class="muted">${esc(s.artist)}</div></div>
+      ${coverFor(s, 80) ? `<img src="${esc(coverFor(s, 80))}" alt="" loading="lazy">` : '<span class="noimg"></span>'}
+      <div class="txt"><div class="tt">${esc(s.title)}</div><div class="muted">${s.source === 'spotify' ? '<span class="src-dot" title="Spotify"></span>' : ''}${esc(s.artist)}</div></div>
       ${i !== cur ? `<button class="icon-btn small" data-act="q-remove" data-i="${i}" title="Entfernen">×</button>` : ''}
     </div>`;
     body.innerHTML = `<div class="q-label">Läuft gerade</div>${item(q[cur], cur)}
@@ -758,24 +1144,26 @@ async function renderLyrics() {
     lyricsFor = s.id;
     lyricsData = null;
     body.innerHTML = '<p class="empty">Lyrics werden geladen …</p>';
-    try { lyricsData = await api.lyrics(s); } catch { lyricsData = null; }
+    // Lokal: aus Tags/.lrc über Navidrome. Spotify-Titel (und lokale ohne Lyrics): LRCLIB.
+    if (s.source !== 'spotify') { try { lyricsData = await api.lyrics(s); } catch { lyricsData = null; } }
+    if (!lyricsData?.line?.length) { try { lyricsData = await spotify.lrclib(s); } catch { lyricsData = null; } }
     if (lyricsFor !== s.id || panel !== 'lyrics') return;
   }
   const L = lyricsData;
   if (!L || !L.line?.length) {
-    body.innerHTML = `<p class="empty">Keine Lyrics für „${esc(s.title)}“ gefunden.<br><br><span style="font-size:12px">Tipp: Lyrics werden aus den FLAC-Tags (LYRICS) oder aus einer .lrc-Datei mit gleichem Namen neben der FLAC-Datei gelesen.</span></p>`;
+    body.innerHTML = `<p class="empty">Keine Lyrics für „${esc(s.title)}“ gefunden.<br><br><span style="font-size:12px">Tipp: Lyrics werden aus den FLAC-Tags (LYRICS), aus einer .lrc-Datei neben der FLAC-Datei oder aus der freien Datenbank LRCLIB gelesen.</span></p>`;
     return;
   }
   body.innerHTML = `<div class="lyrics ${L.synced ? 'synced' : 'plain'}">${L.line.map(l => L.synced
     ? `<p data-act="lyric-seek" data-t="${(l.start || 0) / 1000}" data-start="${l.start || 0}">${esc(l.value) || '&nbsp;'}</p>`
-    : `<p>${esc(l.value) || '&nbsp;'}</p>`).join('')}</div>`;
+    : `<p>${esc(l.value) || '&nbsp;'}</p>`).join('')}${L.source ? `<div class="lyr-src">Lyrics: ${esc(L.source)}</div>` : ''}</div>`;
   syncLyrics(true);
 }
 
 let lastLyricIdx = -1;
 function syncLyrics(force = false) {
   if (!lyricsData?.synced) return;
-  const ms = player.audioEl.currentTime * 1000;
+  const ms = player.position() * 1000;
   const ps = $$('#panel-body .lyrics p');
   let idx = -1;
   ps.forEach((p, i) => { if (+p.dataset.start <= ms + 150) idx = i; });
@@ -810,11 +1198,25 @@ $('#new-playlist').onclick = async () => {
 $('#logout').onclick = () => { api.logout(); player.audioEl.pause(); location.reload(); };
 
 // ---------------------------------------------------------------- Start
-function showApp() {
+function updateSpotifyNav() {
+  const on = spotify.isConnected();
+  $('#nav-spotify').innerHTML = `Spotify <span class="dot${on ? ' on' : ''}" title="${on ? 'verbunden' : 'nicht verbunden'}"></span>`;
+  $('#nav-abgleich').hidden = !on;
+}
+
+async function showApp() {
   $('#login').hidden = true;
   $('#app').hidden = false;
   $('#user-name').textContent = api.userName();
   refreshPlaylists().catch(() => {});
+  try { await spotify.init(); } catch (e) { toast(e.message); }
+  updateSpotifyNav();
+  spotify.on(w => { if (w === 'auth') updateSpotifyNav(); if (w?.type === 'ratelimit') toast(`Spotify bremst, warte ${w.wait} s …`); });
+  if (spotify.isConnected()) {
+    loadSpotify().catch(e => toast('Spotify: ' + e.message));
+    // Spotify-Player schon vorbereiten, damit der erste Klick sofort spielt
+    if (spotify.secureOk()) spotify.ensurePlayer(player.audioEl.volume).catch(e => console.warn(e));
+  }
   window.addEventListener('hashchange', route);
   route();
   renderState();
