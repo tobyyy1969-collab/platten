@@ -106,12 +106,45 @@ Deine gespeicherten Spotify-Alben erscheinen zusammen mit deinen FLACs in „Mei
 * Playlists liegen in Navidrome und enthalten deshalb vorerst nur deine FLACs.
 * Die Spotify-Wiedergabe braucht Chrome, Edge, Firefox oder Safari auf dem Laptop; im Browser muss Ton erlaubt sein.
 
+## Als App auf iPhone und Mac
+
+Plattenregal lässt sich als App installieren (eine sogenannte Web-App). Sie bekommt ein eigenes Symbol, startet ohne Browserleiste im eigenen Fenster und zeigt auf dem Sperrbildschirm Titel, Cover und Tasten. Du brauchst dafür **kein Xcode, keinen Apple-Entwickler-Account und keinen App Store**, und Updates kommen automatisch mit jedem `git pull` auf dem Server.
+
+### Vorbereitung (einmal pro Gerät): Zertifikat vertrauen
+
+Die App läuft über `https://SERVER-IP:8443`. Damit iPhone und Mac dieser Adresse vertrauen, installierst du einmal das Plattenregal-Zertifikat:
+
+**iPhone**
+1. In Safari `http://SERVER-IP:8080/zertifikat.crt` öffnen und „Zulassen“ tippen.
+2. **Einstellungen → Allgemein → VPN und Geräteverwaltung** → „Caddy Local Authority“ → **Installieren**.
+3. **Einstellungen → Allgemein → Info → Zertifikatsvertrauenseinstellungen** → bei „Caddy Local Authority“ den Schalter **einschalten**.
+
+**Mac**
+1. `http://SERVER-IP:8080/zertifikat.crt` im Browser öffnen, die geladene Datei doppelklicken.
+2. In der Schlüsselbundverwaltung „Caddy Local Authority“ doppelklicken → „Vertrauen“ → **Immer vertrauen**.
+
+### Installieren
+
+* **iPhone:** In Safari `https://SERVER-IP:8443` öffnen, anmelden, dann **Teilen → Zum Home-Bildschirm**.
+* **Mac:** In Chrome `https://SERVER-IP:8443` öffnen und in der Adressleiste auf **Installieren** klicken. In Safari geht es über **Ablage → Zum Dock hinzufügen**. Für Spotify empfehle ich auf dem Mac Chrome, dort ist der Spotify-Player im Browser am zuverlässigsten.
+
+### Spotify auf dem iPhone
+
+Auf dem iPhone gibt es den Spotify-Player für Browser nicht. Plattenregal steuert dort deshalb die **Spotify-App** (Spotify Connect): Du wählst Alben und Titel in Plattenregal, der Ton kommt aus der Spotify-App. Beim ersten Mal die Spotify-App kurz öffnen, damit sie als Gerät erscheint. Über das Lautsprecher-Symbol im großen Player kannst du auch ein anderes Spotify-Gerät wählen, zum Beispiel deinen Mac.
+
+Gut zu wissen:
+* Deine FLACs spielt das iPhone selbst ab, in voller Qualität, auch bei gesperrtem Bildschirm.
+* Bei gesperrtem Bildschirm spielt die Spotify-App die Spotify-Titel deiner Warteschlange weiter. Folgt danach eine FLAC, geht es erst weiter, wenn du Plattenregal wieder öffnest.
+* Die App funktioniert nur im Heimnetz, so wie bisher. Für unterwegs ließe sich später zum Beispiel Tailscale ergänzen.
+* Die Spotify-Anmeldung machst du einmal in der installierten App (Seite **Spotify**). Die Client ID aus `.env` ist dort schon eingetragen.
+
 ## Dateien
 
 ```
 docker-compose.yml   Navidrome + Webserver + HTTPS (Caddy)
 nginx.conf.template  liefert die Oberfläche aus und reicht /rest an Navidrome weiter
-Caddyfile            HTTPS mit eigenem Zertifikat (für Spotify)
+Caddyfile            HTTPS mit eigenem Zertifikat (für Spotify und die App)
+web/manifest.webmanifest, web/sw.js, web/icons/   macht Plattenregal als App installierbar
 .env.example         Vorlage für deine Einstellungen
 web/                 die Oberfläche (HTML, CSS, JavaScript, ohne Build-Schritt)
 ```
@@ -125,3 +158,4 @@ web/                 die Oberfläche (HTML, CSS, JavaScript, ohne Build-Schritt)
 ![FLACs und Spotify gemeinsam](docs/screenshots/5-gemeinsam.png)
 ![Spotify-Album mit Lyrics](docs/screenshots/6-spotify-album.png)
 ![Abgleich](docs/screenshots/7-abgleich.png)
+![Auf dem iPhone](docs/screenshots/8-iphone.png)

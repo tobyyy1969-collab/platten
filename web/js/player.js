@@ -59,7 +59,10 @@ async function load(i, autoplay = true) {
     state.sp = { pos: 0, dur: song.duration, paused: false, at: Date.now() };
     emit('state');
     try {
-      await spotify.play(song.uri, audio.volume);
+      // Folgende Spotify-Titel gleich mitgeben (iPhone: die Spotify-App spielt dann auch bei gesperrtem Bildschirm weiter)
+      const run = [];
+      for (let j = i; j < state.queue.length && state.queue[j].source === 'spotify'; j++) run.push(state.queue[j].uri);
+      await spotify.play(run, audio.volume);
       if (seq !== loadSeq) return;
     } catch (e) {
       if (seq !== loadSeq) return;
@@ -213,6 +216,12 @@ audio.addEventListener('error', () => { if (state.engine === 'local' && audio.ge
 // ---------------------------------------------------------------- Spotify-Wiedergabe
 spotify.on(async what => {
   if (what === 'ended' && state.engine === 'spotify') { next(true); return; }
+  if (what?.type === 'remote-track' && state.engine === 'spotify') {
+    // Die Spotify-App ist selbst zum nächsten Titel gesprungen: Anzeige nachziehen, ohne neu zu starten
+    const j = state.queue.findIndex((s, k) => k > state.index && s.uri === what.uri);
+    if (j >= 0) { state.index = j; updateMediaSession(state.queue[j]); emit('track'); }
+    return;
+  }
   if (what === 'state' && state.engine === 'spotify') {
     const p = await spotify.position();
     if (p) { state.sp = { ...p, at: Date.now() }; emit('state'); }

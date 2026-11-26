@@ -14,3 +14,15 @@ https://{$SERVER_ADDRESS}:8443 {
 		flush_interval -1
 	}
 }
+
+# Nur intern (für nginx): das öffentliche Stammzertifikat zum Herunterladen unter http://SERVER:8080/zertifikat.crt
+http://:8081 {
+	handle /zertifikat.crt {
+		root * /data/caddy/pki/authorities/local
+		rewrite * /root.crt
+		header Content-Type application/x-x509-ca-cert
+		header Content-Disposition "attachment; filename=\"Plattenregal-Zertifikat.crt\""
+		file_server
+	}
+	respond 404
+}

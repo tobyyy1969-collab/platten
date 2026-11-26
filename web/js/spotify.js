@@ -263,12 +263,23 @@ export async function saveAlbum(uri, on = true) {
   }
 }
 
-// ---------------------------------------------------------------- Wiedergabe (Web Playback SDK)
+// ---------------------------------------------------------------- Wiedergabe
+// Zwei Wege:
+//  * "browser": Spotify spielt direkt im Browser (Web Playback SDK) – Mac, PC.
+//  * "connect": Plattenregal steuert die Spotify-App auf einem Gerät (Spotify Connect) – iPhone/iPad,
+//    denn dort gibt es den Browser-Player von Spotify nicht.
+const KEY_DEVICE = 'plattenregal.spotify.device';
+const isMobile = () => /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let mode = isMobile() ? 'connect' : 'browser';
+export const playbackMode = () => mode;
+
 let sdkPlayer = null;
 let deviceId = null;
 let sdkReady = null;
 let currentUri = null;
-let lastState = null;
+let runUris = [];       // im Connect-Weg: die zusammenhängenden Spotify-Titel, die an die App übergeben wurden
+let lastState = null;   // { pos, dur, paused, uri }
+let started = false;
 let endedFired = false;
 
 function loadSdk() {
@@ -283,6 +294,7 @@ function loadSdk() {
 }
 
 export async function ensurePlayer(volume = 0.8) {
+  if (mode === 'connect') return null;
   if (deviceId) return deviceId;
   if (!secureOk()) throw new Error('Spotify-Wiedergabe braucht die HTTPS-Adresse (siehe Einstellungen)');
   await loadSdk();
@@ -292,8 +304,12 @@ export async function ensurePlayer(volume = 0.8) {
       getOAuthToken: cb => accessToken().then(cb).catch(() => {}),
       volume,
     });
-    sdkPlayer.addListener('player_state_changed', onState);
-    sdkPlayer.addListener('initialization_error', ({ message }) => emit({ type: 'error', message: 'Spotify-Player: ' + message }));
+    sdkPlayer.addListener('player_state_changed', onSdkState);
+    sdkPlayer.addListener('initialization_error', ({ message }) => {
+      // Browser kann den Spotify-Player nicht (z. B. fehlender Kopierschutz-Baustein): auf Spotify Connect ausweichen
+      mode = 'connect';
+      emit({ type: 'error', message: 'Dieser Browser kann Spotify nicht selbst abspielen. Plattenregal steuert stattdessen deine Spotify-App. (' + message + ')' });
+    });
     sdkPlayer.addListener('authentication_error', ({ message }) => emit({ type: 'error', message: 'Spotify-Anmeldung: ' + message }));
     sdkPlayer.addListener('account_error', () => emit({ type: 'error', message: 'Für die Wiedergabe ist Spotify Premium nötig' }));
     sdkPlayer.addListener('playback_error', ({ message }) => emit({ type: 'error', message: 'Spotify: ' + message }));
@@ -311,9 +327,9 @@ export async function ensurePlayer(volume = 0.8) {
 // Muss direkt aus einem Klick heraus aufgerufen werden (Autoplay-Regeln der Browser).
 export function activate() { try { sdkPlayer?.activateElement?.(); } catch {} }
 
-function onState(state) {
-  lastState = state;
+function onSdkState(state) {
   if (!state || !currentUri) return;
+  lastState = { pos: state.position / 1000, dur: state.duration / 1000, paused: state.paused, uri: state.track_window?.current_track?.uri };
   emit('state');
   // Titelende erkennen: Spotify pausiert am Ende bei Position 0 und schiebt den Titel in "previous_tracks".
   const prev = state.track_window?.previous_tracks ?? [];
@@ -323,22 +339,82 @@ function onState(state) {
   if (finished && !endedFired) { endedFired = true; emit('ended'); }
 }
 
-export async function play(uri, volume) {
-  const id = await ensurePlayer(volume);
-  currentUri = uri;
-  endedFired = false;
-  await call('/me/player/play', { method: 'PUT', query: { device_id: id }, body: { uris: [uri] } });
+// ---- Spotify Connect (iPhone): Geräte der Spotify-App
+export async function devices() {
+  const d = await call('/me/player/devices');
+  return (d?.devices ?? []).filter(x => !x.is_restricted);
+}
+export const chosenDevice = () => { try { return JSON.parse(localStorage.getItem(KEY_DEVICE)); } catch { return null; } };
+export function chooseDevice(dev) { localStorage.setItem(KEY_DEVICE, JSON.stringify({ id: dev.id, name: dev.name, type: dev.type })); emit('device'); }
+
+async function connectDevice() {
+  const list = await devices();
+  const saved = chosenDevice();
+  const dev = list.find(x => x.id === saved?.id) || list.find(x => x.name === saved?.name)
+    || list.find(x => x.is_active) || list.find(x => /smartphone|tablet/i.test(x.type)) || list[0];
+  if (!dev) {
+    const e = new Error('Keine Spotify-App gefunden. Öffne kurz die Spotify-App auf diesem Gerät und tippe dann noch einmal auf Abspielen.');
+    e.noDevice = true;
+    throw e;
+  }
+  if (dev.id !== saved?.id) chooseDevice(dev);
+  return dev.id;
 }
 
-export const pause = () => sdkPlayer?.pause();
-export const resume = () => sdkPlayer?.resume();
-export const seek = sec => sdkPlayer?.seek(Math.round(sec * 1000));
-export const setVolume = v => sdkPlayer?.setVolume(v);
-export function stop() { currentUri = null; if (lastState && !lastState.paused) sdkPlayer?.pause(); }
+// uris: der aktuelle Titel und (im Connect-Weg) die folgenden Spotify-Titel der Warteschlange,
+// damit die Spotify-App auch bei gesperrtem iPhone weiterspielt.
+export async function play(uris, volume) {
+  uris = [].concat(uris);
+  currentUri = uris[0];
+  endedFired = false;
+  started = false;
+  if (mode === 'connect') {
+    const id = await connectDevice();
+    runUris = uris.slice(0, 50);
+    lastState = { pos: 0, dur: 0, paused: false, uri: currentUri };
+    await call('/me/player/play', { method: 'PUT', query: { device_id: id }, body: { uris: runUris } });
+    return;
+  }
+  const id = await ensurePlayer(volume);
+  runUris = [currentUri];
+  await call('/me/player/play', { method: 'PUT', query: { device_id: id }, body: { uris: [currentUri] } });
+}
+
+const remote = (path, query, method = 'PUT') => call(path, { method, query: { ...query, device_id: chosenDevice()?.id } }).catch(e => emit({ type: 'error', message: 'Spotify: ' + e.message }));
+
+export function pause() { if (mode === 'connect') return remote('/me/player/pause'); return sdkPlayer?.pause(); }
+export function resume() { if (mode === 'connect') return remote('/me/player/play'); return sdkPlayer?.resume(); }
+export function seek(sec) { if (mode === 'connect') return remote('/me/player/seek', { position_ms: Math.round(sec * 1000) }); return sdkPlayer?.seek(Math.round(sec * 1000)); }
+export function setVolume(v) { if (mode === 'connect') return; return sdkPlayer?.setVolume(v); } // iPhone: Lautstärke über die Tasten
+export function stop() {
+  const wasPlaying = lastState && !lastState.paused;
+  currentUri = null;
+  runUris = [];
+  if (wasPlaying) pause();
+}
+
+// Aktueller Stand. Im Connect-Weg wird hier auch erkannt, ob die Spotify-App zum nächsten Titel gesprungen ist.
 export async function position() {
-  const s = await sdkPlayer?.getCurrentState();
-  if (s) lastState = s;
-  return s ? { pos: s.position / 1000, dur: s.duration / 1000, paused: s.paused } : null;
+  if (mode === 'browser') {
+    const s = await sdkPlayer?.getCurrentState();
+    if (s) lastState = { pos: s.position / 1000, dur: s.duration / 1000, paused: s.paused, uri: s.track_window?.current_track?.uri };
+    return s ? { pos: s.position / 1000, dur: s.duration / 1000, paused: s.paused } : null;
+  }
+  if (!currentUri) return null;
+  const d = await call('/me/player').catch(() => null);
+  const uri = d?.item?.uri;
+  const st = { pos: (d?.progress_ms || 0) / 1000, dur: (d?.item?.duration_ms || 0) / 1000, paused: !d?.is_playing, uri };
+  if (uri === currentUri && d?.is_playing) started = true;
+  if (started && uri && uri !== currentUri && runUris.includes(uri)) {
+    // Spotify-App hat selbst zum nächsten Titel unserer Liste gewechselt
+    currentUri = uri;
+    emit({ type: 'remote-track', uri });
+  } else if (started && !endedFired && (!d || (uri !== currentUri && !runUris.includes(uri)) || (!d.is_playing && st.pos === 0))) {
+    endedFired = true;
+    emit('ended');
+  }
+  lastState = st;
+  return st;
 }
 export const paused = () => lastState ? lastState.paused : true;
 

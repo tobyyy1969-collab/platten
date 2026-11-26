@@ -584,7 +584,7 @@ async function renderSpotify() {
   const token = renderToken;
   const connected = spotify.isConnected();
   const httpsHint = !spotify.secureOk()
-    ? `<div class="panel-box warn"><b>Spotify braucht die HTTPS-Adresse.</b> Öffne Plattenregal über <code>https://${esc(location.hostname)}:8443</code> (siehe Anleitung im README). Über die normale http-Adresse lässt Spotify keine Anmeldung und keine Wiedergabe zu.</div>` : '';
+    ? `<div class="panel-box warn"><b>Spotify braucht die HTTPS-Adresse.</b> Öffne Plattenregal über <code>https://${esc(location.hostname)}:8443</code>. Über die normale http-Adresse lässt Spotify keine Anmeldung und keine Wiedergabe zu.<br><br>Damit dein Gerät der Adresse vertraut, installiere einmal das <a href="zertifikat.crt">Plattenregal-Zertifikat</a> (Anleitung im README).</div>` : '';
   let user = null;
   if (connected) { try { user = await spotify.me(); } catch (e) { toast('Spotify: ' + e.message); } }
   if (token !== renderToken) return;
@@ -603,6 +603,9 @@ async function renderSpotify() {
         <div class="kv"><span>Gespeicherte Spotify-Alben</span><b>${lib.spotify.length.toLocaleString('de-DE')}</b></div>
         <div class="kv"><span>Davon auch als FLAC vorhanden</span><b>${both.toLocaleString('de-DE')}</b></div>
         <div class="kv"><span>Zuletzt geladen</span><b>${spotify.cachedAt() ? new Date(spotify.cachedAt()).toLocaleString('de-DE') : '–'}</b></div>
+        <div class="kv"><span>Wiedergabe</span><b>${spotify.playbackMode() === 'connect'
+          ? `über die Spotify-App · ${esc(spotify.chosenDevice()?.name || 'Gerät wird beim ersten Abspielen gewählt')} <button class="link-btn" data-act="sp-device">ändern</button>`
+          : 'direkt hier im Browser'}</b></div>
         <p id="sp-progress" class="muted"></p>
         <div class="row-btns">
           <button class="btn primary" data-act="sp-reload">Spotify-Bibliothek neu laden</button>
@@ -727,6 +730,8 @@ function highlightNav() {
 async function route() {
   renderToken++;
   closeMenu();
+  $('#app').classList.remove('drawer-open');
+  $('#player').classList.remove('expanded');
   highlightNav();
   const h = decodeURIComponent(location.hash.replace(/^#\/?/, ''));
   const [view, ...rest] = h.split('/');
@@ -957,6 +962,7 @@ document.addEventListener('click', async e => {
           loadSpotify(true);
           break;
         }
+        case 'sp-device': await deviceMenu(act); break;
         case 'sp-reload': await loadSpotify(true); toast('Spotify-Bibliothek aktualisiert'); route(); break;
         case 'sp-logout': spotify.logout(); lib.spotify = []; lib.merged = null; updateSpotifyNav(); route(); break;
         case 'match-start': runMatcher(); break;
@@ -1003,6 +1009,8 @@ function renderNowPlaying() {
   const src = coverFor(s, 120);
   img.hidden = !src;
   if (src) img.src = src;
+  const big = coverFor(s, 640);
+  if (big) $('#np-big').src = big; else $('#np-big').removeAttribute('src');
   $('#np-title').textContent = s.title;
   $('#np-title').href = '#/album/' + s.albumId;
   $('#np-artist').textContent = s.artist + (s.album ? ' — ' + s.album : '');
@@ -1016,6 +1024,8 @@ function renderNowPlaying() {
 
 function renderState() {
   $('#play-path').setAttribute('d', player.isPlaying() ? ICON.pause : ICON.playPath);
+  $('#play-path-mini').setAttribute('d', player.isPlaying() ? ICON.pause : ICON.playPath);
+  updateDeviceButton();
   const st = player.settings();
   $('#btn-shuffle').classList.toggle('on', st.shuffle);
   $('#btn-repeat').classList.toggle('on', st.repeat !== 'off');
@@ -1028,6 +1038,7 @@ function renderTime() {
   $('#t-cur').textContent = fmtTime(pos);
   $('#t-dur').textContent = fmtTime(dur);
   if (!seeking) { seekEl.value = dur ? Math.round(1000 * pos / dur) : 0; setRangeFill(seekEl); }
+  $('#player').style.setProperty('--prog', (dur ? Math.min(100, 100 * pos / dur) : 0) + '%');
   if (panel === 'lyrics') syncLyrics();
 }
 
@@ -1036,6 +1047,37 @@ seekEl.addEventListener('change', () => { player.seek(player.duration() * seekEl
 volEl.value = player.audioEl.volume; setRangeFill(volEl);
 volEl.addEventListener('input', () => { player.setVolume(+volEl.value); setRangeFill(volEl); });
 $('#btn-play').onclick = () => player.toggle();
+$('#btn-play-mini').onclick = e => { e.stopPropagation(); player.toggle(); };
+$('#btn-next-mini').onclick = e => { e.stopPropagation(); player.next(); };
+
+// ---------------------------------------------------------------- iPhone: Menü und großer Player
+const appEl = $('#app');
+$('#btn-menu').onclick = () => appEl.classList.toggle('drawer-open');
+$('#drawer-backdrop').onclick = () => appEl.classList.remove('drawer-open');
+$('#btn-search').onclick = () => { appEl.classList.add('drawer-open'); setTimeout(() => $('#search-input').focus(), 250); };
+const isSmall = () => matchMedia('(max-width: 900px)').matches;
+$('#np-area').addEventListener('click', e => {
+  if (!isSmall() || !player.current()) return;
+  if (!$('#player').classList.contains('expanded')) { e.preventDefault(); $('#player').classList.add('expanded'); }
+});
+$('#np-collapse').onclick = () => $('#player').classList.remove('expanded');
+$('#np-big').onclick = () => $('#player').classList.remove('expanded');
+
+// Spotify-Wiedergabegerät (iPhone: Spotify-App über Spotify Connect)
+function updateDeviceButton() {
+  const show = spotify.isConnected() && spotify.playbackMode() === 'connect';
+  const b = $('#btn-device');
+  b.hidden = !show;
+  if (show) b.title = 'Spotify spielt auf: ' + (spotify.chosenDevice()?.name || 'noch kein Gerät gewählt');
+}
+async function deviceMenu(anchor) {
+  let list = [];
+  try { list = await spotify.devices(); } catch (e) { return toast('Spotify: ' + e.message); }
+  const cur = spotify.chosenDevice();
+  if (!list.length) return toast('Keine Spotify-App gefunden. Öffne kurz die Spotify-App, dann noch einmal versuchen.');
+  openMenu(anchor, list.map(d => ({ label: `${d.id === cur?.id ? '✓ ' : ''}${d.name} (${d.type})`, run: () => { spotify.chooseDevice(d); updateDeviceButton(); toast('Spotify spielt jetzt auf ' + d.name); } })));
+}
+$('#btn-device').onclick = e => deviceMenu(e.currentTarget);
 $('#btn-next').onclick = () => player.next();
 $('#btn-prev').onclick = () => player.prev();
 $('#btn-shuffle').onclick = () => player.toggleShuffle();
@@ -1052,6 +1094,7 @@ player.on((what, detail) => {
 document.addEventListener('keydown', e => {
   if (e.target.closest('input, textarea, select, dialog')) return;
   if (e.code === 'Space') { e.preventDefault(); player.toggle(); }
+  if (e.key === 'Escape') { $('#player').classList.remove('expanded'); appEl.classList.remove('drawer-open'); }
   if (e.code === 'ArrowRight' && e.shiftKey) player.next();
   if (e.code === 'ArrowLeft' && e.shiftKey) player.prev();
   if (e.key === '/') { e.preventDefault(); $('#search-input').focus(); }
