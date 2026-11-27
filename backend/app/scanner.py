@@ -31,7 +31,11 @@ _EDITION = re.compile(r"\s*[\(\[][^\)\]]*(remaster|deluxe|edition|bonus|expanded
 _LEADING_NUM = re.compile(r"^\s*\d{1,3}\s*[-._)]\s*")
 _VA_PREFIX = re.compile(r"^\s*(va|v\.\s*a\.?|various( artists)?|verschiedene( interpreten)?|diverse|sampler)\s*[-–:]\s*", re.I)
 # Bei Änderungen an der Album-Bildung erhöhen: dann wird beim nächsten Start neu zusammengestellt.
-GROUPING_VERSION = "2"
+GROUPING_VERSION = "3"
+# "Kuschel Jazz 2003 CD 1", "Modern Rock Disc 2", "Album (CD2)"
+_DISC_SUFFIX = re.compile(r"[\s,:;_\-–]*[\(\[]?\s*(?:cd|disc|disk)\s*(\d{1,2})(?:\s*(?:of|von|/)\s*\d+)?\s*[\)\]]?\s*$", re.I)
+_LOOSE_PARENT = re.compile(r"single|einzel", re.I)
+_SAMPLER_PATH = re.compile(r"sampler|soundtrack|compilation|various|ost\b", re.I)
 # Ordner mit mehr losen Titeln gelten als Sammelordner (z. B. "Singles"), nicht als ein Album.
 FOLDER_ALBUM_MAX = 60
 
@@ -70,10 +74,24 @@ def _flag(v) -> int:
     return 1 if str(v or "").strip().lower() in {"1", "true", "yes", "ja"} else 0
 
 
+def strip_disc(title: str | None) -> tuple[str, int | None]:
+    """"Kuschel Jazz 2003 CD 1" → ("Kuschel Jazz 2003", 1)."""
+    if not title:
+        return title or "", None
+    m = _DISC_SUFFIX.search(title)
+    if not m or not title[:m.start()].strip():
+        return title, None
+    return title[:m.start()].strip(), int(m.group(1))
+
+
 def album_dir(d: str) -> str:
-    """Ordner des Albums: CD1/Disc 2-Unterordner zählen zum Elternordner."""
+    """Ordner des Albums: CD1/Disc 2-Unterordner zählen zum Elternordner,
+    "Kuschel Jazz CD1" und "Kuschel Jazz CD2" zum gemeinsamen Namen."""
     p = Path(d)
-    return str(p.parent) if _DISC_DIR.match(p.name) else d
+    if _DISC_DIR.match(p.name):
+        return str(p.parent)
+    base, disc = strip_disc(p.name)
+    return str(p.parent / base) if disc else d
 
 
 # ---------------------------------------------------------------- Tags lesen
@@ -255,6 +273,10 @@ def folder_title(name: str) -> tuple[str, int | None]:
     return " ".join(name.split()).strip(" -–") or name, year
 
 
+def _akey(album: str) -> str:
+    return norm(strip_disc(album)[0])
+
+
 def _plan(rows) -> dict:
     """Entscheidet je Titel, zu welchem Album er gehört.
 
@@ -268,7 +290,7 @@ def _plan(rows) -> dict:
     loose_by_dir = defaultdict(list)
     for r in rows:
         if r["album"]:
-            by_dir_album[(album_dir(r["dir"]), norm(r["album"]))].add(norm(r["albumartist"] or r["artist"]))
+            by_dir_album[(album_dir(r["dir"]), _akey(r["album"]))].add(norm(r["albumartist"] or r["artist"]))
         else:
             loose_by_dir[album_dir(r["dir"])].append(r)
     roots = {str(p).rstrip("/") for p in config.MUSIC_DIRS}
@@ -276,17 +298,21 @@ def _plan(rows) -> dict:
     for r in rows:
         ad = album_dir(r["dir"])
         if r["album"]:
-            if len(by_dir_album[(ad, norm(r["album"]))]) >= 3:
-                keys[r["id"]] = ("sampler", ad, norm(r["album"]))
+            ak = _akey(r["album"])
+            if len(by_dir_album[(ad, ak)]) >= 3:
+                keys[r["id"]] = ("sampler", ad, ak)
             elif r["albumartist"]:
-                keys[r["id"]] = ("aa", norm(r["albumartist"]), norm(r["album"]))
+                keys[r["id"]] = ("aa", norm(r["albumartist"]), ak)
             else:
-                keys[r["id"]] = ("dir", ad, norm(r["album"]))
+                keys[r["id"]] = ("dir", ad, ak)
             continue
         siblings = loose_by_dir[ad]
         top = Counter(norm(t["artist"]) for t in siblings).most_common(1)[0][0]
-        if (ad.rstrip("/") not in roots and 2 <= len(siblings) <= FOLDER_ALBUM_MAX
-                and norm(Path(ad).name) != top):
+        name = Path(ad).name
+        # Ordner, der nur wie der Interpret heißt (z. B. MP3 nach Interpret sortiert): lose Titel bleiben lose.
+        artist_folder = _LOOSE_PARENT.search(name) or (
+            norm(name) == top and " - " not in name and not _SAMPLER_PATH.search(ad))
+        if ad.rstrip("/") not in roots and len(siblings) <= FOLDER_ALBUM_MAX and not artist_folder:
             keys[r["id"]] = ("folder", ad)
         else:
             keys[r["id"]] = ("loose", norm(r["artist"]))
@@ -323,6 +349,15 @@ def _quality(trs) -> str:
     return f"{std if abs(std - br) <= 8 else br} kbit/s"
 
 
+def _disc_hint(t) -> int | None:
+    disc = strip_disc(t["album"])[1]
+    if disc:
+        return disc
+    name = Path(t["dir"]).name
+    m = re.search(r"(\d{1,2})\s*$", name) if _DISC_DIR.match(name) else None
+    return int(m.group(1)) if m else strip_disc(name)[1]
+
+
 def album_id(artist: str, title: str) -> str:
     return hashlib.sha1(f"{norm(artist)}|{norm(title)}".encode()).hexdigest()[:16]
 
@@ -341,7 +376,7 @@ def rebuild() -> None:
         if key[0] == "folder":
             title = folder_name
         else:
-            title = _most([t["album"] for t in trs]) or "Einzeltitel"
+            title = strip_disc(_most([t["album"] for t in trs]))[0] or "Einzeltitel"
         aa = _most([t["albumartist"] for t in trs])
         comp = any(t["compilation"] for t in trs) or is_various(aa) or key[0] == "sampler"
         artists = Counter(t["artist"] for t in trs)
@@ -353,6 +388,15 @@ def rebuild() -> None:
                 aa, comp = VARIOUS, True
             else:
                 aa = top
+            if key[0] == "folder" and norm(aa) == norm(Path(album_dir(trs[0]["dir"])).name):
+                # Interpret stammt aus dem Ordnernamen (keine Tags): "Barry Manilow - The Magic Of …"
+                head, sep, rest = title.partition(" - ")
+                if sep and rest.strip():
+                    aa, title = head.strip(), rest.strip()
+                elif _SAMPLER_PATH.search(str(Path(trs[0]["dir"]).parent)):
+                    aa, comp = VARIOUS, True
+        if is_various(aa):
+            aa, comp = VARIOUS, True
         if comp and (is_various(aa) or not aa):
             aa = VARIOUS
         if key[0] == "folder" and aa != VARIOUS:
@@ -360,6 +404,10 @@ def rebuild() -> None:
             head, sep, rest = title.partition(" - ")
             if sep and norm(head) == norm(aa) and rest.strip():
                 title = rest.strip()
+        if key[0] == "folder":
+            ym = re.match(r"^\s*((?:19|20)\d\d)\s*[-–]\s*(.+)$", title)
+            if ym:
+                year_hint, title = year_hint or int(ym.group(1)), ym.group(2).strip()
         aid = album_id(aa, title if key[0] != "loose" else f"einzeltitel {aa}")
         m = merged.setdefault(aid, {"id": aid, "title": title, "artist": aa, "compilation": int(bool(comp)),
                                     "year_hint": year_hint, "tracks": []})
@@ -378,7 +426,7 @@ def rebuild() -> None:
             _most([t["genre"] for t in trs]), a["compilation"], ",".join(formats), _quality(trs),
             len(main), sum(t["duration"] or 0 for t in main), cover, pic, min(t["added"] or 0 for t in trs),
         ))
-        track_updates.extend((a["id"], t["id"]) for t in trs)
+        track_updates.extend((a["id"], t["disc"] or _disc_hint(t), t["id"]) for t in trs)
         fts.append(("album", a["id"], a["title"], a["artist"], ""))
     for r in rows:
         fts.append(("track", str(r["id"]), r["title"], r["artist"], r["album"] or ""))
@@ -386,7 +434,7 @@ def rebuild() -> None:
     with db.writing() as w:
         w.execute("DELETE FROM albums")
         w.executemany("INSERT INTO albums VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", album_rows)
-        w.executemany("UPDATE tracks SET album_id=? WHERE id=?", track_updates)
+        w.executemany("UPDATE tracks SET album_id=?, disc=? WHERE id=?", track_updates)
         w.execute("DELETE FROM search")
         w.executemany("INSERT INTO search(kind, ref, title, artist, album) VALUES(?,?,?,?,?)", fts)
         w.execute("INSERT OR REPLACE INTO meta VALUES('library_version', ?)", (str(time.time()),))
