@@ -14,5 +14,5 @@ services:
     volumes:
       # Musik vorerst nur lesend. Für die Tag-Bearbeitung (später) wird ":ro" entfernt.
       - ${FLAC_DIR:?FLAC_DIR in .env eintragen}:/music/flac:ro
-      - ${MP3_DIR:?MP3_DIR in .env eintragen}:/music/mp3:ro
+      - ${MP3_DIR:-./ohne-mp3}:/music/mp3:ro
       - ./data:/data
