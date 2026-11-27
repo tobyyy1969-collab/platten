@@ -23,7 +23,7 @@ export class Player extends EventTarget {
     this.audio.addEventListener('play', () => emit('state'));
     this.audio.addEventListener('pause', () => emit('state'));
     this.audio.addEventListener('ended', () => this.onEnded());
-    this.audio.addEventListener('error', () => { if (this.engine === 'local' && this.audio.getAttribute('src')) this.fail('Diese Datei lässt sich nicht abspielen.'); });
+    this.audio.addEventListener('error', () => this.onAudioError());
 
     spotify.on((ev) => {
       if (this.engine !== 'spotify') return;
@@ -49,6 +49,25 @@ export class Player extends EventTarget {
   time() {
     if (this.engine === 'spotify') return { pos: this.sp.pos, dur: this.sp.dur || this.current?.duration || 0 };
     return { pos: this.audio.currentTime || 0, dur: this.audio.duration || this.current?.duration || 0 };
+  }
+
+  /** Lokale Datei: bei einem Fehler einmal neu laden (z. B. Festplatte wacht gerade auf), erst dann melden. */
+  onAudioError() {
+    const t = this.current;
+    if (this.engine !== 'local' || !t || !this.audio.getAttribute('src')) return;
+    if (this.retryFor !== t.id) {
+      this.retryFor = t.id;
+      const at = this.audio.currentTime || 0;
+      const wasPlaying = this.wantPlay;
+      setTimeout(() => {
+        if (this.current !== t) return;
+        this.audio.src = `${api.streamUrl(t.id)}?retry=${Date.now()}`;
+        if (at) this.audio.addEventListener('loadedmetadata', () => { this.audio.currentTime = at; }, { once: true });
+        if (wasPlaying) this.audio.play().catch(() => {});
+      }, 800);
+      return;
+    }
+    this.fail('Diese Datei lässt sich nicht abspielen.');
   }
 
   fail(message) {
@@ -121,6 +140,8 @@ export class Player extends EventTarget {
       if (this.engine === 'spotify') spotify.stop();
       this.stopPolling();
       this.engine = 'local';
+      this.retryFor = null;
+      this.wantPlay = !!autoplay;
       this.audio.src = api.streamUrl(t.id);
       if (autoplay) this.audio.play().catch(() => {});
     }
@@ -160,11 +181,11 @@ export class Player extends EventTarget {
   play() {
     if (!this.current) return;
     if (this.engine === 'spotify') { this.sp.paused = false; spotify.resume(); this.dispatchEvent(new Event('state')); }
-    else this.audio.play().catch(() => {});
+    else { this.wantPlay = true; this.audio.play().catch(() => {}); }
   }
   pause() {
     if (this.engine === 'spotify') { this.sp.paused = true; spotify.pause(); this.dispatchEvent(new Event('state')); }
-    else this.audio.pause();
+    else { this.wantPlay = false; this.audio.pause(); }
   }
   toggle() { this.playing ? this.pause() : this.play(); }
 

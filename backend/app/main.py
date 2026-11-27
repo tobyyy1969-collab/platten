@@ -20,7 +20,24 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("bulldogbeats")
 
 app = FastAPI(title="BulldogBeats", docs_url="/api/docs", openapi_url="/api/openapi.json")
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+
+class _GZipExceptMedia:
+    """GZip nur für Text (Listen, App). Musik und Bilder nie komprimieren: Komprimierte
+    Teilantworten (Range) passen nicht mehr zu Content-Range und brechen die Wiedergabe ab."""
+
+    def __init__(self, app):
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=1000)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"].startswith(("/api/stream/", "/api/cover/")):
+            await self.app(scope, receive, send)
+        else:
+            await self.gzip(scope, receive, send)
+
+
+app.add_middleware(_GZipExceptMedia)
 
 MIME = {"FLAC": "audio/flac", "MP3": "audio/mpeg"}
 COVER_SIZES = (120, 300, 600, 1200)
