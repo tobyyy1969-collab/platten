@@ -29,6 +29,11 @@ _VARIOUS_NAMES = {"various artists", "various", "va", "diverse", "diverse interp
 _DISC_DIR = re.compile(r"^\s*(cd|disc|disk|scheibe|seite|side)[\s._-]*\d+\b.*$|^\s*\d{1,2}\s*$", re.I)
 _EDITION = re.compile(r"\s*[\(\[][^\)\]]*(remaster|deluxe|edition|bonus|expanded|anniversary)[^\)\]]*[\)\]]\s*", re.I)
 _LEADING_NUM = re.compile(r"^\s*\d{1,3}\s*[-._)]\s*")
+_VA_PREFIX = re.compile(r"^\s*(va|v\.\s*a\.?|various( artists)?|verschiedene( interpreten)?|diverse|sampler)\s*[-–:]\s*", re.I)
+# Bei Änderungen an der Album-Bildung erhöhen: dann wird beim nächsten Start neu zusammengestellt.
+GROUPING_VERSION = "2"
+# Ordner mit mehr losen Titeln gelten als Sammelordner (z. B. "Singles"), nicht als ein Album.
+FOLDER_ALBUM_MAX = 60
 
 state = {"running": False, "phase": "bereit", "done": 0, "total": 0, "errors": 0,
          "changed": 0, "started": None, "finished": None, "missing_dirs": []}
@@ -218,7 +223,9 @@ def _scan(full: bool) -> None:
     if gone:
         with db.writing() as w:
             w.executemany("DELETE FROM tracks WHERE path=?", [(p,) for p in gone])
-    if state["changed"] or gone or full or not con.execute("SELECT 1 FROM albums LIMIT 1").fetchone():
+    gv = con.execute("SELECT value FROM meta WHERE key='grouping_version'").fetchone()
+    if (state["changed"] or gone or full or not con.execute("SELECT 1 FROM albums LIMIT 1").fetchone()
+            or not gv or gv[0] != GROUPING_VERSION):
         state["phase"] = "Alben zusammenstellen"
         rebuild()
     state["phase"] = "fertig"
@@ -231,13 +238,59 @@ def _most(values, default=None):
     return c.most_common(1)[0][0] if c else default
 
 
-def _group_key(r) -> tuple:
-    if r["album"]:
-        if r["albumartist"]:
-            return ("aa", norm(r["albumartist"]), norm(r["album"]))
-        # Ohne Album-Interpret: Ordner entscheidet, damit Sampler zusammenbleiben.
-        return ("dir", album_dir(r["dir"]), norm(r["album"]))
-    return ("loose", norm(r["artist"]))
+def folder_title(name: str) -> tuple[str, int | None]:
+    """Albumtitel und Jahr aus einem Ordnernamen wie "VA - Hit History '61 - Volume 07 (1990)"."""
+    year = None
+    m = re.search(r"[\(\[]\s*((?:19|20)\d\d)\s*[\)\]]", name)
+    if m:
+        year = int(m.group(1))
+        name = name[:m.start()] + name[m.end():]
+    m = re.match(r"^\s*((?:19|20)\d\d)\s*[-–]\s*", name)
+    if m:
+        year = year or int(m.group(1))
+        name = name[m.end():]
+    name = _VA_PREFIX.sub("", name)
+    name = re.sub(r"\s+[A-Z]$", "", name.strip())  # Reste wie "… (1990) F"
+    name = re.sub(r"\s*\b(flac|mp3)\b\s*$", "", name, flags=re.I)
+    return " ".join(name.split()).strip(" -–") or name, year
+
+
+def _plan(rows) -> dict:
+    """Entscheidet je Titel, zu welchem Album er gehört.
+
+    - Titel mit Album-Tag: nach Album-Interpret und Album. Liegen im selben Ordner
+      Titel desselben Albums mit drei oder mehr verschiedenen Album-Interpreten,
+      ist es ein Sampler und bleibt zusammen.
+    - Titel ohne Album-Tag: der Ordner ist das Album (Sampler ohne Tags), außer der
+      Ordner ist ein Sammelordner oder heißt wie der Interpret.
+    """
+    by_dir_album = defaultdict(set)
+    loose_by_dir = defaultdict(list)
+    for r in rows:
+        if r["album"]:
+            by_dir_album[(album_dir(r["dir"]), norm(r["album"]))].add(norm(r["albumartist"] or r["artist"]))
+        else:
+            loose_by_dir[album_dir(r["dir"])].append(r)
+    roots = {str(p).rstrip("/") for p in config.MUSIC_DIRS}
+    keys = {}
+    for r in rows:
+        ad = album_dir(r["dir"])
+        if r["album"]:
+            if len(by_dir_album[(ad, norm(r["album"]))]) >= 3:
+                keys[r["id"]] = ("sampler", ad, norm(r["album"]))
+            elif r["albumartist"]:
+                keys[r["id"]] = ("aa", norm(r["albumartist"]), norm(r["album"]))
+            else:
+                keys[r["id"]] = ("dir", ad, norm(r["album"]))
+            continue
+        siblings = loose_by_dir[ad]
+        top = Counter(norm(t["artist"]) for t in siblings).most_common(1)[0][0]
+        if (ad.rstrip("/") not in roots and 2 <= len(siblings) <= FOLDER_ALBUM_MAX
+                and norm(Path(ad).name) != top):
+            keys[r["id"]] = ("folder", ad)
+        else:
+            keys[r["id"]] = ("loose", norm(r["artist"]))
+    return keys
 
 
 def _cover_file(dirs: set[str]) -> str | None:
@@ -278,25 +331,38 @@ def rebuild() -> None:
     con = db.connect()
     rows = con.execute("SELECT * FROM tracks").fetchall()
     groups = defaultdict(list)
+    keys = _plan(rows)
     for r in rows:
-        groups[_group_key(r)].append(r)
+        groups[keys[r["id"]]].append(r)
 
     merged: dict[str, dict] = {}
     for key, trs in groups.items():
-        title = _most([t["album"] for t in trs]) or "Einzeltitel"
+        folder_name, year_hint = folder_title(Path(album_dir(trs[0]["dir"])).name)
+        if key[0] == "folder":
+            title = folder_name
+        else:
+            title = _most([t["album"] for t in trs]) or "Einzeltitel"
         aa = _most([t["albumartist"] for t in trs])
-        comp = any(t["compilation"] for t in trs) or is_various(aa)
-        if not aa:
-            artists = Counter(t["artist"] for t in trs)
+        comp = any(t["compilation"] for t in trs) or is_various(aa) or key[0] == "sampler"
+        artists = Counter(t["artist"] for t in trs)
+        if key[0] == "sampler":
+            aa = VARIOUS
+        elif not aa:
             top, n = artists.most_common(1)[0]
-            if key[0] == "dir" and len(artists) > 2 and n <= len(trs) / 2:
+            if key[0] in ("dir", "folder") and len(artists) > 2 and n <= len(trs) / 2:
                 aa, comp = VARIOUS, True
             else:
                 aa = top
         if comp and (is_various(aa) or not aa):
             aa = VARIOUS
+        if key[0] == "folder" and aa != VARIOUS:
+            # "Udo Lindenberg - Alles klar" → "Alles klar"
+            head, sep, rest = title.partition(" - ")
+            if sep and norm(head) == norm(aa) and rest.strip():
+                title = rest.strip()
         aid = album_id(aa, title if key[0] != "loose" else f"einzeltitel {aa}")
-        m = merged.setdefault(aid, {"id": aid, "title": title, "artist": aa, "compilation": int(bool(comp)), "tracks": []})
+        m = merged.setdefault(aid, {"id": aid, "title": title, "artist": aa, "compilation": int(bool(comp)),
+                                    "year_hint": year_hint, "tracks": []})
         m["tracks"].extend(trs)
 
     album_rows, track_updates, fts = [], [], []
@@ -307,7 +373,8 @@ def rebuild() -> None:
         pic = next((t["id"] for t in trs if t["picture"]), None)
         main = [t for t in trs if t["format"] == formats[0]]
         album_rows.append((
-            a["id"], a["title"], a["artist"], _most([t["year"] for t in trs]) and min(t["year"] for t in trs if t["year"]),
+            a["id"], a["title"], a["artist"],
+            (_most([t["year"] for t in trs]) and min(t["year"] for t in trs if t["year"])) or a["year_hint"],
             _most([t["genre"] for t in trs]), a["compilation"], ",".join(formats), _quality(trs),
             len(main), sum(t["duration"] or 0 for t in main), cover, pic, min(t["added"] or 0 for t in trs),
         ))
@@ -323,4 +390,5 @@ def rebuild() -> None:
         w.execute("DELETE FROM search")
         w.executemany("INSERT INTO search(kind, ref, title, artist, album) VALUES(?,?,?,?,?)", fts)
         w.execute("INSERT OR REPLACE INTO meta VALUES('library_version', ?)", (str(time.time()),))
+        w.execute("INSERT OR REPLACE INTO meta VALUES('grouping_version', ?)", (GROUPING_VERSION,))
     log.info("%d Alben aus %d Titeln", len(album_rows), len(rows))

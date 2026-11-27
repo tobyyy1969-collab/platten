@@ -181,6 +181,10 @@ function bindHeader() {
   $$('[data-filter]', content).forEach((b) => b.addEventListener('click', () => { prefs.filter = b.dataset.filter; store.set('filter', prefs.filter); memory.clear(); route(); }));
 }
 
+/** Interpreten als Verweise auf ihre Seite (mehrere, mit Komma getrennt, einzeln). */
+const artistLinks = (names) => String(names || '').split(', ').filter(Boolean)
+  .map((n) => `<span class="alink" role="link" tabindex="0" data-artist="${esc(n)}">${esc(n)}</span>`).join(', ');
+
 const albumTile = (a, sub) => `<a class="tile" href="#/album/${encodeURIComponent(a.id)}">${coverHtml(a, 300)}
   <span class="t1">${esc(a.title)}</span><span class="t2">${esc(sub ?? `${a.artist}${a.year ? ' · ' + a.year : ''}`)}</span>${badges(a.formats)}</a>`;
 
@@ -315,7 +319,7 @@ async function viewAlbum(r) {
       const disc = t.disc || 1;
       const head = multiDisc && disc !== lastDisc ? `<div class="disc">CD ${disc}</div>` : '';
       lastDisc = disc;
-      const sub = t.artist && t.artist !== a.artist && t.artist !== a.artists ? `<span class="ta">${esc(t.artist)}</span>` : '';
+      const sub = t.artist && t.artist !== a.artist && t.artist !== a.artists ? `<span class="ta">${artistLinks(t.artist)}</span>` : '';
       return `${head}<button class="track" data-i="${i}" data-id="${esc(t.id)}"><span class="n">${t.track || i + 1}</span>
         <span class="tt">${esc(t.title)}${sub}</span><span></span><span class="d">${fmtTime(t.duration)}</span></button>`;
     }).join('');
@@ -414,10 +418,12 @@ async function viewArtist(r) {
       </div>
     </div>
     <section class="stack" style="gap:14px"><h2 class="section">Alben</h2>
-      ${all.length ? `<div class="grid">${all.map((a) => albumTile(a, a.year || '')).join('')}</div>` : '<p class="muted">Keine eigenen Alben.</p>'}</section>
+      ${all.length ? `<div class="grid">${all.map((a) => albumTile(a, a.year || '')).join('')}</div>` : '<p class="muted">Keine Alben in deiner Sammlung.</p>'}</section>
     ${d.appearances.length ? `<section class="stack" style="gap:14px"><h2 class="section">Auf Samplern und anderen Alben</h2>
       <div class="grid">${d.appearances.map((a) => albumTile(lib.byId.get(a.id) || a)).join('')}</div></section>` : ''}
+    <div id="artist-spotify"></div>
   </div>`;
+  if (spotify.isConnected()) artistFromSpotify(d.name, all, r.key);
   const collect = async () => {
     const out = [];
     for (const a of all) {
@@ -432,6 +438,33 @@ async function viewArtist(r) {
   content.querySelector('[data-act=shuffle]').onclick = async () => { const t = await collect(); if (!player.shuffle) player.toggleShuffle(); player.playList(t, Math.floor(Math.random() * t.length)); };
 }
 
+/** Interpretenseite ergänzen: Foto und die Alben bei Spotify, die nicht in der Sammlung sind. */
+async function artistFromSpotify(name, shown, key) {
+  try {
+    const ar = await spotify.artistByName(name);
+    if (!ar || current.key !== key) return;
+    const photo = content.querySelector('.artist-photo');
+    if (photo && ar.image) {
+      photo.querySelector('img')?.remove();
+      photo.insertAdjacentHTML('beforeend', `<img src="${esc(ar.image)}" alt="" onerror="this.remove()">`);
+    }
+    const albums = await spotify.artistAlbums(ar.id);
+    if (current.key !== key) return;
+    const seen = new Set(shown.map(keyOf));
+    const missing = [];
+    for (const a of albums) {
+      const k = keyOf(a);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      missing.push({ ...a, artists: a.artist, artist: a.artist.split(', ')[0] });
+    }
+    if (!missing.length) return;
+    missing.sort((x, y) => (x.year || 0) - (y.year || 0));
+    $('#artist-spotify').outerHTML = `<section class="stack" style="gap:14px"><h2 class="section">Bei Spotify, nicht in deiner Sammlung</h2>
+      <div class="grid">${missing.map((a) => albumTile(a, a.year || '')).join('')}</div></section>`;
+  } catch (e) { console.warn('Spotify-Interpret', e); }
+}
+
 // ---------------------------------------------------------------- Suche
 
 let searchTimer;
@@ -444,7 +477,7 @@ function onSearchInput(value) {
   }, 260);
 }
 
-const trackRow = (t) => `<button class="track" data-id="${esc(t.id)}"><span class="n"></span><span class="tt">${esc(t.title)}<span class="ta">${esc(t.artist)} · ${esc(t.album || '')}</span></span><span></span><span class="d">${fmtTime(t.duration)}</span></button>`;
+const trackRow = (t) => `<button class="track" data-id="${esc(t.id)}"><span class="n"></span><span class="tt">${esc(t.title)}<span class="ta">${artistLinks(t.artist)} · ${esc(t.album || '')}</span></span><span></span><span class="d">${fmtTime(t.duration)}</span></button>`;
 
 async function viewSearch(r) {
   const q = r.params.get('q') || '';
@@ -525,7 +558,7 @@ function viewPlayer(r) {
     lyrics: () => `<div class="lyrics"><p class="muted" style="font-size:15px;line-height:1.6">Liedtexte (erst Deutsch, sonst Englisch, mitlaufend) werden im nächsten Ausbauschritt eingebaut.</p></div>`,
     queue: () => `<div>${player.upcoming().map(({ track: q, orderPos }, k) => `<button class="queue-item${k === 0 ? ' current' : ''}" data-pos="${orderPos}">
         ${coverHtml(albumFor(q), 120)}
-        <span class="qt"><b>${esc(q.title)}</b><span>${esc(q.artist)} · ${esc(q.album || '')}</span></span>
+        <span class="qt"><b>${esc(q.title)}</b><span>${artistLinks(q.artist)} · ${esc(q.album || '')}</span></span>
         <span class="badge ${esc(q.format)}">${esc(q.format)}</span><span class="muted">${fmtTime(q.duration)}</span></button>`).join('')}</div>`,
     info: () => `<div class="stack" style="gap:12px;max-width:620px"><p style="margin:0;line-height:1.6">${esc(t.title)} von ${esc(t.artist)}${t.album ? `, aus „${esc(t.album)}“` : ''}${t.year ? ` (${t.year})` : ''}.</p>
       <a href="https://de.wikipedia.org/w/index.php?search=${encodeURIComponent(`${t.title} ${t.artist}`)}" target="_blank" rel="noopener">Bei Wikipedia nachschlagen ↗</a></div>`,
@@ -539,7 +572,7 @@ function viewPlayer(r) {
       ${coverHtml(album, 1200)}
       <div class="stack" style="gap:4px">
         <span class="np-title">${esc(t.title)}</span>
-        <a href="#/interpret/${encodeURIComponent(t.artist.split(', ')[0])}" style="font-size:16px;font-weight:600">${esc(t.artist)}</a>
+        <span style="font-size:16px;font-weight:600">${artistLinks(t.artist)}</span>
         ${t.album_id ? `<a href="#/album/${encodeURIComponent(t.album_id)}" class="muted">${esc(t.album || '')}${t.year ? ' · ' + t.year : ''}</a>` : ''}
       </div>
       <div class="row"><span class="badge ${esc(t.format)}">${esc(t.format)}</span><span class="muted" style="font-size:12.5px">${where}</span></div>
@@ -662,7 +695,7 @@ async function viewPlaylist(r) {
       <button class="btn" data-act="queue">Zur Warteschlange</button>
     </div>
     <div class="tracks">${tracks.map((t, i) => `<button class="track" data-i="${i}" data-id="${esc(t.id)}"><span class="n">${i + 1}</span>
-      <span class="tt">${esc(t.title)}<span class="ta">${esc(t.artist)} · ${esc(t.album || '')}</span></span><span></span><span class="d">${fmtTime(t.duration)}</span></button>`).join('')}</div>
+      <span class="tt">${esc(t.title)}<span class="ta">${artistLinks(t.artist)} · ${esc(t.album || '')}</span></span><span></span><span class="d">${fmtTime(t.duration)}</span></button>`).join('')}</div>
   </div>`;
   $$('.track', content).forEach((b) => b.addEventListener('click', () => player.playList(tracks, +b.dataset.i)));
   content.querySelector('[data-act=play]').onclick = () => { if (player.shuffle) player.toggleShuffle(); player.playList(tracks, 0); };
@@ -773,6 +806,17 @@ $('#search').addEventListener('input', (e) => onSearchInput(e.target.value));
 $('#search').addEventListener('focus', () => { if (current.view !== 'suche' && $('#search').value) onSearchInput($('#search').value); });
 $('#back').onclick = () => (history.length > 1 ? history.back() : (location.hash = '#/alben'));
 $('.device').addEventListener('click', () => { if ($('.device').classList.contains('clickable')) pickDevice(); });
+
+const openArtist = (e) => {
+  const el = e.target.closest?.('[data-artist]');
+  if (!el || (e.type === 'keydown' && e.key !== 'Enter')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  closeSheet();
+  location.hash = '#/interpret/' + encodeURIComponent(el.dataset.artist);
+};
+document.addEventListener('click', openArtist, true);
+document.addEventListener('keydown', openArtist, true);
 
 document.addEventListener('click', (e) => {
   if (e.target.closest('[data-sp-login]')) spotify.login().catch((err) => toast(err.message));

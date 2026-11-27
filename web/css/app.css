@@ -277,3 +277,6 @@ button.link { color: var(--accent); font-weight: 600; text-align: left; }
   .sheet-back { place-items: end stretch; padding: 0; }
   .sheet { width: 100%; border-radius: 16px 16px 0 0; padding-bottom: calc(var(--safe-b) + 14px); }
 }
+.alink { cursor: pointer; }
+.alink:hover, .alink:focus-visible { color: var(--accent); text-decoration: underline; }
+.np .alink { color: var(--accent); }

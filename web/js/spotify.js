@@ -420,3 +420,25 @@ export async function position() {
   lastState = st;
   return st;
 }
+
+// ---------------------------------------------------------------- Interpreten
+/** Interpreten bei Spotify über den Namen finden (genauer Treffer, sonst null). */
+export async function artistByName(name) {
+  const d = await search(`artist:${name}`, 'artist', 10);
+  const items = (d?.artists?.items ?? []).filter(Boolean);
+  const hit = items.find((a) => norm(a.name) === norm(name));
+  return hit ? { id: hit.id, name: hit.name, image: image(hit.images, 640), genres: hit.genres ?? [] } : null;
+}
+
+export async function artistAlbums(id, max = 100) {
+  const out = [];
+  let next = `/artists/${id}/albums`;
+  let query = { include_groups: 'album,compilation', limit: 10, market: 'from_token' };
+  while (next && out.length < max) {
+    const d = await call(next, { query });
+    out.push(...(d?.items ?? []).filter(Boolean).map((a) => toAlbum(a)));
+    next = d?.next;
+    query = undefined;
+  }
+  return out;
+}
