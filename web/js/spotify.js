@@ -228,8 +228,15 @@ export async function album(spotifyId) {
 
 export const search = (q, type = 'album,track,artist', limit = 10) => call('/search', { query: { q, type, limit, market: 'from_token' } });
 
+/** Album in der Spotify-Bibliothek speichern (oder entfernen). Neuer Weg: /me/library?uris=…, alter: /me/albums?ids=… */
 export async function saveAlbum(uri, saved = true) {
-  await callEither(['/me/library', '/me/albums'], { method: saved ? 'PUT' : 'DELETE', body: { uris: [uri], ids: [uri.split(':').pop()] } });
+  const method = saved ? 'PUT' : 'DELETE';
+  try {
+    await call('/me/library', { method, query: { uris: uri } });
+  } catch (e) {
+    if (![403, 404, 405].includes(e.status)) throw e;
+    await call('/me/albums', { method, query: { ids: uri.split(':').pop() } });
+  }
 }
 
 // ---------------------------------------------------------------- Playlists
