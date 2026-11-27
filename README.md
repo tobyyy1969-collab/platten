@@ -2,7 +2,7 @@
 
 Deine Musik in einer hellen, ruhigen App für MacBook und iPhone: FLAC-Alben und MP3s vom eigenen Server, später zusammen mit Spotify. Im Mittelpunkt stehen die Alben.
 
-## Was Stufe 1 kann
+## Was BulldogBeats kann
 
 | Bereich | Funktionen |
 |---|---|
@@ -13,7 +13,9 @@ Deine Musik in einer hellen, ruhigen App für MacBook und iPhone: FLAC-Alben und
 | **Suche** | Interpreten, Alben und Titel; Umlaute egal („gronemeyer“ findet „Grönemeyer“). Treffer nach Quelle getrennt. |
 | **Wiedergabe** | Auf dem Gerät (auch Bluetooth), Warteschlange, Zufall, Wiederholen, Sperrbildschirm-Steuerung auf dem iPhone. Mac: Leertaste = Pause, ← → = Titel, Shift + ← → = 10 Sekunden, ⌘F = Suche. |
 
-Kommt als Nächstes: Spotify (Stufe 2), Cover und Infos aus dem Netz, Liedtexte, Biografien, Lückenanzeige (Stufe 3), Tag-Bearbeitung und Offline-Download (Stufe 4).
+| **Spotify** | Anmelden im Browser (links unten „Mit Spotify verbinden“, nur über die https-Adresse). Gespeicherte Spotify-Alben erscheinen in der Übersicht; dasselbe Album lokal und bei Spotify nur einmal, mit Quellenauswahl. Eigene Alben werden bei Spotify gesucht und lassen sich dort speichern. Suche zeigt erst Spotify, dann FLAC, dann MP3. Spotify-Playlists ansehen, abspielen, neu anlegen, Alben hinzufügen. Wiedergabe am Mac direkt im Browser, am iPhone über die Spotify-App (Spotify Connect, Gerät wählbar). Spotify Premium nötig. |
+
+Kommt als Nächstes: Cover und Infos aus dem Netz, Liedtexte, Biografien, Lückenanzeige (Stufe 3), Tag-Bearbeitung und Offline-Download (Stufe 4).
 
 ## Installation auf dem Server
 

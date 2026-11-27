@@ -29,12 +29,19 @@ export function colorsFor(key) {
 let libVersion = '0';
 export const setVersion = (v) => { libVersion = v; };
 
+/** Bildadresse eines Albums: Spotify-Bild oder eigenes Cover vom Server ('' wenn keins). */
+export function coverSrc(album, size = 300) {
+  if (album.image) return size > 300 && album.imageLarge ? album.imageLarge : album.image;
+  const id = String(album.id || '');
+  if (!id || id.includes(':') || album.cover === false) return '';
+  return `/api/cover/${encodeURIComponent(id)}?s=${size}&v=${encodeURIComponent(libVersion)}`;
+}
+
 /** Cover als Farbfläche mit Titel; das echte Bild legt sich darüber, wenn es existiert. */
 export function coverHtml(album, size = 300, opts = {}) {
   const [bg, fg] = colorsFor(album.id || album.title);
-  const img = album.id && !opts.noImage && album.cover !== false
-    ? `<img src="/api/cover/${esc(album.id)}?s=${size}&v=${esc(libVersion)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">`
-    : '';
+  const src = opts.noImage ? '' : coverSrc(album, size);
+  const img = src ? `<img src="${esc(src)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : '';
   return `<div class="cover" style="background:${bg};color:${fg}">
     <span class="ph-artist">${esc(album.artist)}</span><span class="ph-title">${esc(album.title)}</span>${img}</div>`;
 }

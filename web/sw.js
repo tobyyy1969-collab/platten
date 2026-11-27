@@ -1,8 +1,8 @@
 // Service Worker: App-Gerüst und Cover zwischenspeichern.
 // Musik wird nicht zwischengespeichert (das kommt mit dem Offline-Download).
-const SHELL = 'bb-shell-v1';
+const SHELL = 'bb-shell-v2';
 const COVERS = 'bb-covers-v1';
-const SHELL_FILES = ['/', '/css/app.css', '/js/app.js', '/js/lib.js', '/js/player.js', '/manifest.webmanifest', '/icons/icon-192.png'];
+const SHELL_FILES = ['/', '/css/app.css', '/js/app.js', '/js/lib.js', '/js/player.js', '/js/spotify.js', '/manifest.webmanifest', '/icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(SHELL).then((c) => c.addAll(SHELL_FILES)).then(() => self.skipWaiting()));
