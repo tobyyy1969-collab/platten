@@ -1,160 +1,118 @@
-// Wiedergabe und Warteschlange. Spielt die FLAC-Dateien direkt im Browser ab.
-// Für Schritt 2 (Spotify) bekommt jeder Titel ein Feld "source"; hier gibt es vorerst nur "local".
-import * as api from './api.js';
+// Wiedergabe auf diesem Gerät: Warteschlange, Zufall, Wiederholen, Sperrbildschirm-Steuerung.
+import { api, store } from './lib.js';
 
-const audio = new Audio();
-audio.preload = 'auto';
+export class Player extends EventTarget {
+  constructor(audio) {
+    super();
+    this.audio = audio;
+    this.queue = [];      // Titel-Objekte: {id, title, artist, album, album_id, format, duration, ...}
+    this.order = [];      // Abspielreihenfolge (Indizes in queue), bei Zufall gemischt
+    this.pos = -1;        // Position in order
+    this.shuffle = false;
+    this.repeat = 'off';  // off | all | one
+    this.audio.volume = store.get('volume', 1);
 
-const state = {
-  queue: [],
-  index: -1,
-  shuffle: false,
-  repeat: 'off', // off | all | one
-};
+    const emit = (type) => this.dispatchEvent(new Event(type));
+    this.audio.addEventListener('timeupdate', () => emit('time'));
+    this.audio.addEventListener('durationchange', () => emit('time'));
+    this.audio.addEventListener('play', () => emit('state'));
+    this.audio.addEventListener('pause', () => emit('state'));
+    this.audio.addEventListener('ended', () => this.onEnded());
+    this.audio.addEventListener('error', () => { if (this.current) this.next(); });
 
-const listeners = new Set();
-const emit = (what) => listeners.forEach(fn => fn(what));
-export const on = fn => listeners.add(fn);
-
-export const audioEl = audio;
-export const current = () => state.queue[state.index] ?? null;
-export const queue = () => state.queue;
-export const index = () => state.index;
-export const isPlaying = () => !audio.paused;
-export const settings = () => ({ shuffle: state.shuffle, repeat: state.repeat });
-
-let scrobbled = false;
-
-function load(i, autoplay = true) {
-  if (i < 0 || i >= state.queue.length) return;
-  state.index = i;
-  const song = state.queue[i];
-  scrobbled = false;
-  audio.src = api.streamUrl(song.id);
-  if (autoplay) audio.play().catch(() => {});
-  api.scrobble(song.id, false).catch(() => {}); // "läuft gerade"
-  updateMediaSession(song);
-  emit('track');
-}
-
-function shuffled(arr) {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
+    if ('mediaSession' in navigator) {
+      const ms = navigator.mediaSession;
+      ms.setActionHandler('play', () => this.play());
+      ms.setActionHandler('pause', () => this.pause());
+      ms.setActionHandler('previoustrack', () => this.prev());
+      ms.setActionHandler('nexttrack', () => this.next());
+      try { ms.setActionHandler('seekto', (e) => { this.audio.currentTime = e.seekTime; }); } catch { /* ältere Browser */ }
+    }
   }
-  return a;
-}
 
-export function playList(songs, start = 0) {
-  if (!songs.length) return;
-  if (state.shuffle) {
-    const first = songs[start];
-    state.queue = [first, ...shuffled(songs.filter((_, i) => i !== start))];
-    start = 0;
-  } else {
-    state.queue = songs.slice();
+  get current() { return this.pos >= 0 ? this.queue[this.order[this.pos]] : null; }
+  get playing() { return !this.audio.paused; }
+
+  /** Neue Warteschlange setzen und ab Titel `start` spielen. */
+  playList(tracks, start = 0) {
+    this.queue = tracks.slice();
+    this.order = this.queue.map((_, i) => i);
+    if (this.shuffle) this.reshuffle(start);
+    this.pos = this.shuffle ? 0 : start;
+    this.load(true);
   }
-  load(start);
-  emit('queue');
-}
 
-export function enqueue(songs) {
-  const wasEmpty = state.queue.length === 0;
-  state.queue.push(...songs);
-  emit('queue');
-  if (wasEmpty) load(0);
-}
-
-export function playNext(songs) {
-  if (state.queue.length === 0) return playList(songs);
-  state.queue.splice(state.index + 1, 0, ...songs);
-  emit('queue');
-}
-
-export function jump(i) { load(i); }
-
-export function removeAt(i) {
-  if (i === state.index) return;
-  state.queue.splice(i, 1);
-  if (i < state.index) state.index--;
-  emit('queue');
-}
-
-export function clearQueue() {
-  const cur = current();
-  state.queue = cur ? [cur] : [];
-  state.index = cur ? 0 : -1;
-  emit('queue');
-}
-
-export function toggle() {
-  if (!current()) return;
-  if (audio.paused) audio.play().catch(() => {}); else audio.pause();
-}
-
-export function next(auto = false) {
-  if (auto && state.repeat === 'one') { audio.currentTime = 0; audio.play(); return; }
-  if (state.index + 1 < state.queue.length) load(state.index + 1);
-  else if (state.repeat === 'all' && state.queue.length) load(0);
-  else if (auto) { audio.pause(); emit('state'); }
-}
-
-export function prev() {
-  if (audio.currentTime > 3 || state.index <= 0) { audio.currentTime = 0; return; }
-  load(state.index - 1);
-}
-
-export function seek(sec) { if (isFinite(sec)) audio.currentTime = sec; }
-export function setVolume(v) { audio.volume = v; localStorage.setItem('plattenregal.volume', v); }
-
-export function toggleShuffle() {
-  state.shuffle = !state.shuffle;
-  if (state.shuffle && state.queue.length > 1) {
-    const cur = current();
-    const rest = state.queue.filter((_, i) => i !== state.index);
-    state.queue = [cur, ...shuffled(rest)];
-    state.index = 0;
-    emit('queue');
+  enqueue(tracks, next = false) {
+    const base = this.queue.length;
+    this.queue.push(...tracks);
+    const idx = tracks.map((_, i) => base + i);
+    if (next && this.pos >= 0) this.order.splice(this.pos + 1, 0, ...idx);
+    else this.order.push(...idx);
+    if (this.pos < 0) { this.pos = 0; this.load(true); }
+    this.dispatchEvent(new Event('queue'));
   }
-  emit('state');
-}
 
-export function cycleRepeat() {
-  state.repeat = { off: 'all', all: 'one', one: 'off' }[state.repeat];
-  emit('state');
-}
+  jump(orderPos) { this.pos = orderPos; this.load(true); }
 
-audio.addEventListener('ended', () => next(true));
-audio.addEventListener('play', () => emit('state'));
-audio.addEventListener('pause', () => emit('state'));
-audio.addEventListener('timeupdate', () => {
-  emit('time');
-  const song = current();
-  // Als "gehört" zählen, wenn die Hälfte oder 4 Minuten erreicht sind.
-  if (song && !scrobbled && audio.duration && (audio.currentTime > audio.duration / 2 || audio.currentTime > 240)) {
-    scrobbled = true;
-    api.scrobble(song.id, true).catch(() => {});
+  reshuffle(keepIndex) {
+    const rest = this.order.filter((i) => i !== keepIndex);
+    for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [rest[i], rest[j]] = [rest[j], rest[i]]; }
+    this.order = keepIndex === undefined || keepIndex < 0 ? rest : [keepIndex, ...rest];
   }
-});
-audio.addEventListener('error', () => emit('error'));
 
-const savedVol = parseFloat(localStorage.getItem('plattenregal.volume'));
-audio.volume = isFinite(savedVol) ? savedVol : 0.8;
+  toggleShuffle() {
+    this.shuffle = !this.shuffle;
+    const cur = this.pos >= 0 ? this.order[this.pos] : -1;
+    if (this.shuffle) { this.reshuffle(cur); this.pos = cur >= 0 ? 0 : -1; }
+    else { this.order = this.queue.map((_, i) => i); this.pos = cur; }
+    this.dispatchEvent(new Event('queue'));
+  }
 
-function updateMediaSession(song) {
-  if (!('mediaSession' in navigator)) return;
-  navigator.mediaSession.metadata = new MediaMetadata({
-    title: song.title,
-    artist: song.artist,
-    album: song.album,
-    artwork: song.coverArt ? [{ src: new URL(api.coverUrl(song.coverArt, 512), location.href).href, sizes: '512x512' }] : [],
-  });
-}
+  cycleRepeat() {
+    this.repeat = { off: 'all', all: 'one', one: 'off' }[this.repeat];
+    this.dispatchEvent(new Event('queue'));
+  }
 
-if ('mediaSession' in navigator) {
-  navigator.mediaSession.setActionHandler('play', () => audio.play());
-  navigator.mediaSession.setActionHandler('pause', () => audio.pause());
-  navigator.mediaSession.setActionHandler('nexttrack', () => next());
-  navigator.mediaSession.setActionHandler('previoustrack', () => prev());
+  load(autoplay) {
+    const t = this.current;
+    if (!t) return;
+    this.audio.src = api.streamUrl(t.id);
+    if (autoplay) this.audio.play().catch(() => {});
+    this.updateMediaSession();
+    this.dispatchEvent(new Event('track'));
+  }
+
+  play() { if (this.current) this.audio.play().catch(() => {}); }
+  pause() { this.audio.pause(); }
+  toggle() { this.playing ? this.pause() : this.play(); }
+
+  next() {
+    if (this.pos < this.order.length - 1) { this.pos++; this.load(true); }
+    else if (this.repeat === 'all' && this.order.length) { this.pos = 0; this.load(true); }
+    else { this.pause(); }
+  }
+
+  prev() {
+    if (this.audio.currentTime > 3 || this.pos <= 0) { this.audio.currentTime = 0; return; }
+    this.pos--; this.load(true);
+  }
+
+  onEnded() {
+    if (this.repeat === 'one') { this.audio.currentTime = 0; this.play(); return; }
+    this.next();
+  }
+
+  seekFraction(f) { if (isFinite(this.audio.duration)) this.audio.currentTime = f * this.audio.duration; }
+  setVolume(v) { this.audio.volume = v; store.set('volume', v); }
+
+  upcoming() { return this.order.slice(this.pos).map((qi, k) => ({ track: this.queue[qi], orderPos: this.pos + k })); }
+
+  updateMediaSession() {
+    const t = this.current;
+    if (!t || !('mediaSession' in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: t.title, artist: t.artist, album: t.album || '',
+      artwork: t.album_id ? [300, 600].map((s) => ({ src: `/api/cover/${t.album_id}?s=${s}`, sizes: `${s}x${s}`, type: 'image/jpeg' })) : [],
+    });
+  }
 }
