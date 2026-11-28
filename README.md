@@ -41,6 +41,16 @@ sudo tailscale serve --bg 8484
 
 Danach ist BulldogBeats überall, wo Tailscale an ist, unter `https://<servername>.<tailnet>.ts.net` erreichbar, mit gültigem Zertifikat. Voraussetzung: Im Tailscale-Admin unter DNS sind MagicDNS und „HTTPS Certificates“ eingeschaltet.
 
+### Mit NordVPN auf dem Mac (sichere Adresse im Heimnetz)
+
+NordVPN und Tailscale vertragen sich auf dem Mac nicht. Damit die https-Adresse zu Hause trotzdem geht, liefert ein kleiner Caddy-Dienst sie auch direkt im Heimnetz aus (Zertifikat kommt von Tailscale):
+
+1. In `.env` auf dem Server ergänzen: `COMPOSE_PROFILES=heimnetz`, `LAN_IP=<Server-IP>`, `TS_HOST=<servername>.<tailnet>.ts.net`, dann `docker compose up -d`.
+2. Auf dem Mac einmalig: `echo "<Server-IP> <servername>.<tailnet>.ts.net" | sudo tee -a /etc/hosts`
+3. Firefox braucht unter Systemeinstellungen → Datenschutz & Sicherheit → Lokales Netzwerk die Erlaubnis.
+
+Unterwegs gilt dann: NordVPN aus, Tailscale an.
+
 ### Auf dem iPhone als App
 
 Die https-Adresse in Safari öffnen, Teilen-Knopf, „Zum Home-Bildschirm“.

@@ -16,3 +16,20 @@ services:
       - ${FLAC_DIR:?FLAC_DIR in .env eintragen}:/music/flac:ro
       - ${MP3_DIR:-./ohne-mp3}:/music/mp3:ro
       - ./data:/data
+
+  # Optional: https://<server>.<tailnet>.ts.net auch direkt im Heimnetz (siehe README).
+  # Einschalten mit COMPOSE_PROFILES=heimnetz in .env.
+  heimnetz:
+    image: caddy:2.8.4
+    container_name: bulldogbeats-heimnetz
+    profiles: ["heimnetz"]
+    restart: unless-stopped
+    depends_on: [bulldogbeats]
+    ports:
+      - "${LAN_IP:-0.0.0.0}:443:443"
+    environment:
+      TS_HOST: ${TS_HOST:-}
+    volumes:
+      - ./Caddyfile.heimnetz:/etc/caddy/Caddyfile:ro
+      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock
+      - ./data/caddy:/data
