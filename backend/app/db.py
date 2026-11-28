@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS albums(
   compilation INTEGER, formats TEXT, quality TEXT,
   track_count INTEGER, duration REAL,
   cover_path TEXT, cover_track INTEGER,
-  added REAL
+  added REAL, kind TEXT
 );
 CREATE INDEX IF NOT EXISTS albums_artist ON albums(artist);
 
@@ -36,6 +36,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(
 );
 
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+
+-- Von Jürgen gesetzte Art eines Albums (solo, sampler, soundtrack); gilt auch für Spotify-Alben (sp:…).
+CREATE TABLE IF NOT EXISTS album_kinds(id TEXT PRIMARY KEY, kind TEXT NOT NULL);
+
+-- Liedtexte und Übersetzungen, einmal geholt und dann aufbewahrt.
+CREATE TABLE IF NOT EXISTS lyrics(
+  key TEXT PRIMARY KEY, plain TEXT, synced TEXT, lang TEXT, source TEXT,
+  de TEXT, instrumental INTEGER DEFAULT 0, fetched REAL
+);
 """
 
 _local = threading.local()
@@ -58,6 +67,9 @@ def connect() -> sqlite3.Connection:
 def init() -> None:
     con = connect()
     con.executescript(SCHEMA)
+    cols = {r[1] for r in con.execute("PRAGMA table_info(albums)")}
+    if "kind" not in cols:
+        con.execute("ALTER TABLE albums ADD COLUMN kind TEXT")
     con.commit()
 
 

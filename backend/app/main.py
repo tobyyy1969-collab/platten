@@ -16,7 +16,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, db, scanner
+from . import config, db, lyrics, scanner
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("bulldogbeats")
@@ -73,7 +73,7 @@ def _album_out(r) -> dict:
     return {"id": r["id"], "title": r["title"], "artist": r["artist"], "year": r["year"],
             "formats": (r["formats"] or "").split(",") if r["formats"] else [],
             "quality": r["quality"], "tracks": r["track_count"], "added": r["added"],
-            "compilation": bool(r["compilation"]),
+            "compilation": bool(r["compilation"]), "kind": r["kind"] or "solo",
             "cover": bool(r["cover_path"] or r["cover_track"])}
 
 
@@ -106,6 +106,39 @@ def albums(request: Request):
     rows = db.connect().execute("SELECT * FROM albums").fetchall()
     return JSONResponse({"version": v, "albums": [_album_out(r) for r in rows]},
                         headers={"ETag": f'"{v}"', "Cache-Control": "no-cache"})
+
+
+KINDS = ("solo", "sampler", "soundtrack")
+
+
+@app.get("/api/kinds")
+def kinds():
+    """Von Jürgen geänderte Album-Arten (überschreiben die automatische Erkennung)."""
+    return {r[0]: r[1] for r in db.connect().execute("SELECT id, kind FROM album_kinds")}
+
+
+@app.put("/api/kinds/{aid}")
+def set_kind(aid: str, kind: str = ""):
+    with db.writing() as w:
+        if kind in KINDS:
+            w.execute("INSERT OR REPLACE INTO album_kinds VALUES(?,?)", (aid, kind))
+        else:
+            w.execute("DELETE FROM album_kinds WHERE id=?", (aid,))
+    return {"id": aid, "kind": kind if kind in KINDS else None}
+
+
+@app.get("/api/lyrics")
+def get_lyrics(artist: str, title: str, album: str = "", duration: float = 0, track: int | None = None):
+    path = None
+    if track:
+        r = db.connect().execute("SELECT path FROM tracks WHERE id=?", (track,)).fetchone()
+        path = r[0] if r else None
+    return lyrics.find(artist, title, album, duration, path)
+
+
+@app.get("/api/lyrics/de")
+def get_translation(artist: str, title: str):
+    return lyrics.translate(artist, title)
 
 
 def _track_out(r) -> dict:

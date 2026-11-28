@@ -31,11 +31,15 @@ _EDITION = re.compile(r"\s*[\(\[][^\)\]]*(remaster|deluxe|edition|bonus|expanded
 _LEADING_NUM = re.compile(r"^\s*\d{1,3}\s*[-._)]\s*")
 _VA_PREFIX = re.compile(r"^\s*(va|v\.\s*a\.?|various( artists)?|verschiedene( interpreten)?|diverse|sampler)\s*[-–:]\s*", re.I)
 # Bei Änderungen an der Album-Bildung erhöhen: dann wird beim nächsten Start neu zusammengestellt.
-GROUPING_VERSION = "3"
+GROUPING_VERSION = "4"
 # "Kuschel Jazz 2003 CD 1", "Modern Rock Disc 2", "Album (CD2)"
 _DISC_SUFFIX = re.compile(r"[\s,:;_\-–]*[\(\[]?\s*(?:cd|disc|disk)\s*(\d{1,2})(?:\s*(?:of|von|/)\s*\d+)?\s*[\)\]]?\s*$", re.I)
 _LOOSE_PARENT = re.compile(r"single|einzel", re.I)
 _SAMPLER_PATH = re.compile(r"sampler|soundtrack|compilation|various|ost\b", re.I)
+# Soundtracks an Titel, Genre oder Ordner erkennen
+SOUNDTRACK = re.compile(
+    r"soundtrack|filmmusik|o\.?s\.?t\.?\b|original (motion picture|score|film|cast|tv|television)"
+    r"|music from (and inspired by )?(the )?(motion picture|film|movie|series|tv)|\bscore\b|musical", re.I)
 # Ordner mit mehr losen Titeln gelten als Sammelordner (z. B. "Singles"), nicht als ein Album.
 FOLDER_ALBUM_MAX = 60
 
@@ -251,6 +255,17 @@ def _scan(full: bool) -> None:
 
 # ---------------------------------------------------------------- Alben bilden
 
+def _root(d: str) -> Path:
+    """Musikordner, in dem `d` liegt (damit nur die Ordner darunter zählen)."""
+    for r in config.MUSIC_DIRS:
+        try:
+            Path(d).relative_to(r)
+            return Path(r)
+        except ValueError:
+            continue
+    return Path(d).parent
+
+
 def _most(values, default=None):
     c = Counter(v for v in values if v)
     return c.most_common(1)[0][0] if c else default
@@ -410,7 +425,7 @@ def rebuild() -> None:
                 year_hint, title = year_hint or int(ym.group(1)), ym.group(2).strip()
         aid = album_id(aa, title if key[0] != "loose" else f"einzeltitel {aa}")
         m = merged.setdefault(aid, {"id": aid, "title": title, "artist": aa, "compilation": int(bool(comp)),
-                                    "year_hint": year_hint, "tracks": []})
+                                    "year_hint": year_hint, "loose": key[0] == "loose", "tracks": []})
         m["tracks"].extend(trs)
 
     album_rows, track_updates, fts = [], [], []
@@ -420,11 +435,21 @@ def rebuild() -> None:
         cover = _cover_file({t["dir"] for t in trs})
         pic = next((t["id"] for t in trs if t["picture"]), None)
         main = [t for t in trs if t["format"] == formats[0]]
+        genre = _most([t["genre"] for t in trs])
+        folders = " ".join({str(Path(t["dir"]).relative_to(_root(t["dir"]))) for t in trs})
+        if a["loose"]:
+            kind = "single"
+        elif SOUNDTRACK.search(f'{a["title"]} | {genre or ""} | {folders}'):
+            kind = "soundtrack"
+        elif a["compilation"] or a["artist"] == VARIOUS:
+            kind = "sampler"
+        else:
+            kind = "solo"
         album_rows.append((
             a["id"], a["title"], a["artist"],
             (_most([t["year"] for t in trs]) and min(t["year"] for t in trs if t["year"])) or a["year_hint"],
-            _most([t["genre"] for t in trs]), a["compilation"], ",".join(formats), _quality(trs),
-            len(main), sum(t["duration"] or 0 for t in main), cover, pic, min(t["added"] or 0 for t in trs),
+            genre, a["compilation"], ",".join(formats), _quality(trs),
+            len(main), sum(t["duration"] or 0 for t in main), cover, pic, min(t["added"] or 0 for t in trs), kind,
         ))
         track_updates.extend((a["id"], t["disc"] or _disc_hint(t), t["id"]) for t in trs)
         fts.append(("album", a["id"], a["title"], a["artist"], ""))
@@ -433,7 +458,7 @@ def rebuild() -> None:
 
     with db.writing() as w:
         w.execute("DELETE FROM albums")
-        w.executemany("INSERT INTO albums VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", album_rows)
+        w.executemany("INSERT INTO albums VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", album_rows)
         w.executemany("UPDATE tracks SET album_id=?, disc=? WHERE id=?", track_updates)
         w.execute("DELETE FROM search")
         w.executemany("INSERT INTO search(kind, ref, title, artist, album) VALUES(?,?,?,?,?)", fts)

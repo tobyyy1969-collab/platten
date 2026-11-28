@@ -46,6 +46,16 @@ function sheet(title, html, bind) {
 
 // ---------------------------------------------------------------- Bibliothek (Server + Spotify)
 
+/** Album-Arten: eigene Ansichten für Solo-Alben, Sampler und Soundtracks. */
+const KIND_VIEWS = { solo: 'solo', sampler: 'sampler', soundtracks: 'soundtrack' };
+const KIND_TITLE = { solo: 'Solo-Alben', sampler: 'Sampler', soundtracks: 'Soundtracks' };
+const KIND_LABEL = { solo: 'Album', sampler: 'Sampler', soundtrack: 'Soundtrack', single: 'Einzeltitel' };
+const LIB_VIEWS = ['alben', 'interpreten', 'jahre', ...Object.keys(KIND_VIEWS)];
+const ALBUM_VIEWS = ['alben', ...Object.keys(KIND_VIEWS)];
+const SOUNDTRACK = /soundtrack|filmmusik|\bo\.?s\.?t\b|original (motion picture|score|film|cast|tv|television)|music from (and inspired by )?(the )?(motion picture|film|movie|series|tv)|\bscore\b|musical/i;
+let kindOver = {}, kindsLoaded = false;
+const spKind = (a) => (SOUNDTRACK.test(a.title) ? 'soundtrack' : a.compilation || isVA(a.artist) ? 'sampler' : 'solo');
+
 const isVA = (n) => n === VA || /^(various( artists)?|verschiedene( interpreten)?|va|diverse)$/i.test(String(n).trim());
 const keyOf = (a) => (isVA(a.artist) ? 'va|' + spotify.norm(a.title) : spotify.albumKey(a.artist, a.title));
 
@@ -67,12 +77,14 @@ function merge() {
       byKey.set(k, c);
     }
   }
+  for (const a of out) a.kind = kindOver[a.id] || (a.id.startsWith('sp:') ? spKind(a) : a.kind || 'solo');
   lib.albums = out;
   lib.byId = new Map(out.map((a) => [a.id, a]));
   lib.byKey = byKey;
 }
 
 async function loadLibrary() {
+  if (!kindsLoaded) { kindOver = await api.kinds().catch(() => ({})); kindsLoaded = true; }
   const d = await api.albums();
   if (d.version === lib.version) return false;
   lib.version = d.version;
@@ -84,9 +96,10 @@ async function loadLibrary() {
 
 const formatsInLibrary = () => ['FLAC', 'MP3', 'Spotify'].filter((f) => lib.albums.some((a) => a.formats.includes(f)));
 
-function filtered() {
+function filtered(kind) {
   const f = formatsInLibrary().includes(prefs.filter) ? prefs.filter : 'Alle';
-  return f === 'Alle' ? lib.albums : lib.albums.filter((a) => a.formats.includes(f));
+  const list = f === 'Alle' ? lib.albums : lib.albums.filter((a) => a.formats.includes(f));
+  return kind ? list.filter((a) => a.kind === kind) : list;
 }
 
 const SORTS = {
@@ -102,7 +115,7 @@ function syncSpotify(force = false) {
   if (!spotify.isConnected() || syncing) return syncing;
   if (!force && Date.now() - spotify.cachedAt() < 30 * 60e3) return null;
   syncing = spotify.savedAlbums((n, total) => { syncNote = `${nf.format(n)} von ${nf.format(total || n)}`; renderSources(); })
-    .then(() => { merge(); if (['alben', 'interpreten', 'jahre'].includes(current.view)) route(); })
+    .then(() => { merge(); if (LIB_VIEWS.includes(current.view)) route(); })
     .catch((e) => toast('Spotify-Bibliothek: ' + e.message))
     .finally(() => { syncing = null; syncNote = ''; renderSources(); });
   return syncing;
@@ -138,15 +151,15 @@ async function route() {
   const r = parseHash();
   current = { key: r.key, view: r.view };
   document.body.classList.toggle('view-player', r.view === 'wiedergabe');
-  const top = ['alben', 'interpreten', 'jahre', 'suche', 'playlists', 'offline'];
+  const top = [...LIB_VIEWS, 'suche', 'playlists', 'offline'];
   $('#back').hidden = top.includes(r.view) || r.view === 'wiedergabe';
   const navKey = ['album', 'interpret'].includes(r.view) ? null : r.view === 'playlist' ? 'playlists' : r.view;
   $$('.nav-link').forEach((a) => a.classList.toggle('active', a.dataset.nav === navKey));
-  const tab = { alben: 'alben', interpreten: 'alben', jahre: 'alben', album: 'alben', interpret: 'alben', suche: 'suche', playlists: 'playlists', playlist: 'playlists', offline: 'offline' }[r.view];
+  const tab = { alben: 'alben', solo: 'alben', sampler: 'alben', soundtracks: 'alben', interpreten: 'alben', jahre: 'alben', album: 'alben', interpret: 'alben', suche: 'suche', playlists: 'playlists', playlist: 'playlists', offline: 'offline' }[r.view];
   $$('.tabbar a').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));
   if (r.view !== 'suche' && document.activeElement !== $('#search')) $('#search').value = '';
 
-  const views = { alben: viewLibrary, interpreten: viewLibrary, jahre: viewLibrary, album: viewAlbum, interpret: viewArtist, suche: viewSearch, wiedergabe: viewPlayer, playlists: viewPlaylists, playlist: viewPlaylist, offline: viewOffline };
+  const views = { alben: viewLibrary, solo: viewLibrary, sampler: viewLibrary, soundtracks: viewLibrary, interpreten: viewLibrary, jahre: viewLibrary, album: viewAlbum, interpret: viewArtist, suche: viewSearch, wiedergabe: viewPlayer, playlists: viewPlaylists, playlist: viewPlaylist, offline: viewOffline };
   const mem = memory.get(r.key);
   try {
     await (views[r.view] || viewLibrary)(r, mem);
@@ -162,15 +175,18 @@ async function route() {
 
 function libraryHeader(view) {
   const tabs = [['alben', 'Alben'], ['interpreten', 'Interpreten'], ['jahre', 'Jahre']];
-  const sortChips = view === 'alben' ? `<div class="chips"><span class="label">Sortieren:</span>${Object.entries(SORTS).map(([k, s]) => `<button class="chip" data-sort="${k}" aria-pressed="${prefs.sort === k}">${s.label}</button>`).join('')}</div>` : '';
+  const albumView = ALBUM_VIEWS.includes(view);
+  const kindChips = albumView ? `<div class="chips"><span class="label">Art:</span>${[['alben', 'Alle'], ...Object.entries(KIND_TITLE)].map(([k, l]) => `<button class="chip" data-go="#/${k}" aria-pressed="${view === k}">${l}</button>`).join('')}</div>` : '';
+  const sortChips = albumView ? `<div class="chips"><span class="label">Sortieren:</span>${Object.entries(SORTS).map(([k, s]) => `<button class="chip" data-sort="${k}" aria-pressed="${prefs.sort === k}">${s.label}</button>`).join('')}</div>` : '';
   const fs = formatsInLibrary();
   const active = fs.includes(prefs.filter) ? prefs.filter : 'Alle';
   const filters = fs.length > 1 ? `<div class="chips"><span class="label">Quelle:</span>${['Alle', ...fs].map((f) => `<button class="chip" data-filter="${f}" aria-pressed="${active === f}">${f}</button>`).join('')}</div>` : '';
   return `<div class="stack" style="gap:16px;margin-bottom:24px">
     <div class="row" style="gap:24px;align-items:flex-end">
-      <h1 class="page">${mobile() ? 'Bibliothek' : tabs.find((t) => t[0] === view)[1]}</h1>
-      <div class="seg" role="group" aria-label="Ansicht">${tabs.map(([k, l]) => `<button data-go="#/${k}" aria-pressed="${view === k}">${l}</button>`).join('')}</div>
+      <h1 class="page">${mobile() ? 'Bibliothek' : KIND_TITLE[view] || tabs.find((t) => t[0] === view)[1]}</h1>
+      <div class="seg" role="group" aria-label="Ansicht">${tabs.map(([k, l]) => `<button data-go="#/${k}" aria-pressed="${view === k || (k === 'alben' && albumView)}">${l}</button>`).join('')}</div>
     </div>
+    ${kindChips}
     <div class="row" style="gap:18px">${sortChips}${filters}</div>
   </div>`;
 }
@@ -215,6 +231,24 @@ function trackMenu(t) {
   });
 }
 
+function kindDialog(a, done) {
+  const cur = kindOver[a.id] || '';
+  const opts = [['solo', 'Solo-Album', 'Ein Album eines Interpreten'], ['sampler', 'Sampler', 'Zusammenstellung verschiedener Interpreten'],
+    ['soundtrack', 'Soundtrack', 'Musik aus Film, Serie oder Musical'], ['', 'Automatisch erkennen', 'BulldogBeats entscheidet selbst']];
+  sheet('Art des Albums', opts.map(([k, l, d]) => `<button class="sheet-item" data-k="${k}"><b>${l}${k === cur ? ' ✓' : ''}</b><span class="muted">${d}</span></button>`).join(''), (el) => {
+    $$('[data-k]', el).forEach((b) => b.addEventListener('click', async () => {
+      closeSheet();
+      try { await api.setKind(a.id, b.dataset.k); } catch (e) { toast('Das hat nicht geklappt: ' + e.message); return; }
+      if (b.dataset.k) kindOver[a.id] = b.dataset.k; else delete kindOver[a.id];
+      memory.clear();
+      merge();
+      if (!b.dataset.k) { const d = await api.album(a.id).catch(() => null); if (d) { const x = lib.byId.get(a.id); if (x && !a.id.startsWith('sp:')) x.kind = d.kind; } }
+      done();
+      toast(`„${a.title}“ steht jetzt unter ${{ solo: 'Solo-Alben', sampler: 'Sampler', soundtrack: 'Soundtracks' }[lib.byId.get(a.id)?.kind] || 'Alben'}.`);
+    }));
+  });
+}
+
 /** Interpreten als Verweise auf ihre Seite (mehrere, mit Komma getrennt, einzeln). */
 const artistLinks = (names) => String(names || '').split(', ').filter(Boolean)
   .map((n) => `<span class="alink" role="link" tabindex="0" data-artist="${esc(n)}">${esc(n)}</span>`).join(', ');
@@ -249,13 +283,15 @@ function infiniteGrid(container, items, renderItem, initialCount) {
 async function viewLibrary(r, mem) {
   if (!lib.version) await loadLibrary();
   const view = r.view;
-  const list = filtered();
-  content.innerHTML = libraryHeader(view) + (lib.albums.length ? '<div class="grid" id="grid"></div>' : emptyLibrary());
+  const list = filtered(KIND_VIEWS[view]);
+  const noneOfKind = lib.albums.length && KIND_VIEWS[view] && !list.length
+    ? `<div class="empty"><strong>Hier ist noch nichts.</strong><br>Auf jeder Albumseite kannst du oben einstellen, ob es ein Solo-Album, ein Sampler oder ein Soundtrack ist.</div>` : '';
+  content.innerHTML = libraryHeader(view) + (noneOfKind || (lib.albums.length ? '<div class="grid" id="grid"></div>' : emptyLibrary()));
   bindHeader();
-  if (!lib.albums.length) return;
+  if (!lib.albums.length || noneOfKind) return;
   const grid = $('#grid');
 
-  if (view === 'alben') {
+  if (ALBUM_VIEWS.includes(view)) {
     const sorted = list.slice().sort(SORTS[prefs.sort].fn);
     infiniteGrid(grid, sorted, (a) => albumTile(a), mem?.count);
   } else if (view === 'interpreten') {
@@ -363,7 +399,7 @@ async function viewAlbum(r) {
       <div class="stack" style="gap:28px;min-width:0">
         <div class="album-head">${coverHtml(a, 600)}
           <div class="stack" style="gap:10px;min-width:0">
-            <span class="kicker">${a.compilation ? 'Sampler' : 'Album'}</span>
+            <button class="kicker kind-btn" data-act="kind" title="Art ändern">${KIND_LABEL[lib.byId.get(a.id)?.kind || a.kind] || (a.compilation ? 'Sampler' : 'Album')} <span aria-hidden="true">▾</span></button>
             <h1 class="album-title">${esc(a.title)}</h1>
             ${a.artist === VA ? `<span class="album-artist">${VA}</span>` : `<a class="album-artist" href="#/interpret/${encodeURIComponent(a.artist)}">${esc(a.artists || a.artist)}</a>`}
             <span class="muted">${[a.year, a.genre, `${tracks.length} Titel`, fmtDuration(tracks.reduce((s, t) => s + (t.duration || 0), 0))].filter(Boolean).map(esc).join(' · ')}</span>
@@ -398,6 +434,7 @@ async function viewAlbum(r) {
     $$('.track', content).forEach((b) => b.addEventListener('click', () => player.playList(pt, +b.dataset.i)));
     const act = (k, fn) => { const b = content.querySelector(`[data-act=${k}]`); if (b) b.onclick = fn; };
     act('play', () => { if (player.shuffle) player.toggleShuffle(); player.playList(pt, 0); });
+    act('kind', () => kindDialog(a, render));
     act('shuffle', () => { if (!player.shuffle) player.toggleShuffle(); player.playList(pt, Math.floor(Math.random() * pt.length)); });
     act('next', () => { player.enqueue(pt, true); toast(`„${a.title}“ kommt als Nächstes.`); });
     act('queue', () => { player.enqueue(pt, false); toast(`„${a.title}“ steht in der Warteschlange.`); });
@@ -591,7 +628,7 @@ function viewPlayer(r) {
   const album = albumFor(t);
   const tabs = [['lyrics', 'Liedtext'], ['queue', 'Warteschlange'], ['info', 'Über das Lied']];
   const pane = {
-    lyrics: () => `<div class="lyrics"><p class="muted" style="font-size:15px;line-height:1.6">Liedtexte (erst Deutsch, sonst Englisch, mitlaufend) werden im nächsten Ausbauschritt eingebaut.</p></div>`,
+    lyrics: () => `<div class="lyrics" id="lyrics"><p class="muted lyr-note">Liedtext wird gesucht …</p></div>`,
     queue: () => `<div>${player.upcoming().map(({ track: q, orderPos }, k) => `<button class="queue-item${k === 0 ? ' current' : ''}" data-pos="${orderPos}">
         ${coverHtml(albumFor(q), 120)}
         <span class="qt"><b>${esc(q.title)}</b><span>${artistLinks(q.artist)} · ${esc(q.album || '')}</span></span>
@@ -636,6 +673,74 @@ function viewPlayer(r) {
   bindSeek(content.querySelector('[data-seek]'));
   updatePlayState();
   updateTime();
+  if (tab === 'lyrics') loadLyrics(t);
+}
+
+// ---------------------------------------------------------------- Liedtexte
+
+const lyricsCache = new Map();
+const langName = (l) => { try { return new Intl.DisplayNames(['de'], { type: 'language' }).of(l); } catch { return l; } };
+const showDe = () => store.get('lyricsDe', true);
+
+/** Zeilen wie auf dem Server: Kopfzeilen weglassen, Zeitmarken abtrennen. */
+function lyricLines(d) {
+  if (!d.synced) return d.plain.split('\n').map((text) => ({ t: null, text: text.trim() }));
+  return d.synced.split('\n').filter((l) => !/^\s*\[[a-z]+:/i.test(l)).map((l) => {
+    const m = l.match(/^\s*\[(\d+):(\d+(?:[.:]\d+)?)\]/);
+    return { t: m ? +m[1] * 60 + parseFloat(m[2].replace(':', '.')) : null, text: l.replace(/^\s*(\[\d+:[\d.:]+\]\s*)+/, '').trim() };
+  });
+}
+
+async function loadLyrics(t) {
+  const box = content.querySelector('#lyrics');
+  if (!box) return;
+  const still = () => player.current?.id === t.id && content.contains(box);
+  let d = lyricsCache.get(t.id);
+  if (!d) {
+    d = await api.lyrics({ artist: t.artist, title: t.title, album: t.album || '', duration: Math.round(t.duration || 0), track: t.source === 'spotify' ? '' : t.id })
+      .catch(() => ({ found: false, error: 'Der Liedtext ließ sich gerade nicht laden.' }));
+    if (!d.error) lyricsCache.set(t.id, d);
+  }
+  if (!still()) return;
+  if (!d.found || (!d.plain && d.instrumental)) {
+    box.innerHTML = `<p class="muted lyr-note">${esc(d.error || (d.instrumental ? 'Ein Instrumentalstück, ohne Text.' : 'Für dieses Lied ist kein Liedtext bekannt.'))}</p>`;
+    return;
+  }
+  const lines = lyricLines(d);
+  const draw = (tr) => {
+    const de = showDe() && Array.isArray(tr?.lines) ? tr.lines : null;
+    const lang = tr?.lang ? langName(tr.lang) : '';
+    const toggle = tr?.lines ? `<button class="link" data-de>${showDe() ? 'Übersetzung ausblenden' : 'Deutsche Übersetzung zeigen'}</button>` : '';
+    const state = tr === undefined ? 'Übersetzung wird geholt …' : tr?.error ? esc(tr.error) : '';
+    box.toggleAttribute('data-synced', !!d.synced);
+    box.innerHTML = `<div class="lyr-head muted">Originaltext${lang ? ' · ' + esc(lang) : ''}${d.source === 'Datei' ? ' · aus der Datei' : ''} ${toggle}<span>${state}</span></div>
+      ${lines.map((l, i) => l.text ? `<div class="line"${l.t != null ? ` data-t="${l.t}"` : ''}>${esc(l.text)}${de?.[i] ? `<span class="de">${esc(de[i])}</span>` : ''}</div>` : '<div class="gap"></div>').join('')}
+      ${showDe() && tr?.lines?.block ? `<div class="lyr-block"><div class="lyr-head muted">Deutsche Übersetzung</div>${esc(tr.lines.block).replace(/\n/g, '<br>')}</div>` : ''}
+      <p class="muted lyr-src">Liedtext: ${d.source === 'Datei' ? 'aus der Musikdatei' : 'LRCLIB'}${tr?.lines ? ' · Übersetzung: Google Übersetzer' : ''}</p>`;
+    box.querySelector('[data-de]')?.addEventListener('click', () => { store.set('lyricsDe', !showDe()); draw(tr); });
+    $$('.line[data-t]', box).forEach((el) => el.addEventListener('click', () => { const { dur } = player.time(); if (dur) player.seekFraction(+el.dataset.t / dur); }));
+    lastLyric = null;
+    updateLyric();
+  };
+  draw(d.trans);
+  if (d.trans) return;
+  const tr = await api.lyricsDe(t.artist, t.title).catch(() => ({ error: 'Die Übersetzung ließ sich gerade nicht laden.' }));
+  if (!tr.error) d.trans = tr;
+  if (still()) draw(tr);
+}
+
+let lastLyric = null;
+function updateLyric() {
+  const box = content.querySelector('#lyrics[data-synced]');
+  if (!box) return;
+  const { pos } = player.time();
+  let now = null;
+  for (const el of box.querySelectorAll('.line[data-t]')) { if (+el.dataset.t <= pos + 0.3) now = el; else break; }
+  if (now === lastLyric) return;
+  lastLyric?.classList.remove('now');
+  now?.classList.add('now');
+  lastLyric = now;
+  if (now && !box.matches(':hover')) now.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 
 // ---------------------------------------------------------------- Playlists
@@ -824,6 +929,7 @@ player.addEventListener('track', updateTrack);
 player.addEventListener('state', updatePlayState);
 player.addEventListener('queue', () => { updatePlayState(); if (current.view === 'wiedergabe') viewPlayer(parseHash()); });
 player.addEventListener('time', updateTime);
+player.addEventListener('time', updateLyric);
 player.addEventListener('error', (e) => toast(e.message || 'Wiedergabe nicht möglich.'));
 
 $('#btn-play').onclick = () => player.toggle();
@@ -925,7 +1031,7 @@ async function pollStatus() {
   renderSources();
   if (st.version !== lib.version && lib.version !== null) {
     const changed = await loadLibrary();
-    if (changed && ['alben', 'interpreten', 'jahre'].includes(current.view)) route();
+    if (changed && LIB_VIEWS.includes(current.view)) route();
   }
   syncSpotify();
   statusTimer = setTimeout(pollStatus, st.scan.running ? 3000 : 60000);

@@ -67,6 +67,10 @@ export const api = {
   search: (q) => get(`/api/search?q=${encodeURIComponent(q)}`),
   scan: (full = false) => fetch(`/api/scan?full=${full}`, { method: 'POST' }).then((r) => r.json()),
   streamUrl: (id) => `/api/stream/${id}`,
+  kinds: () => get('/api/kinds'),
+  setKind: (id, kind) => fetch(`/api/kinds/${encodeURIComponent(id)}?kind=${encodeURIComponent(kind || '')}`, { method: 'PUT' }).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); }),
+  lyrics: (p) => get(`/api/lyrics?${new URLSearchParams(Object.entries(p).filter(([, v]) => v !== '' && v != null))}`),
+  lyricsDe: (artist, title) => get(`/api/lyrics/de?${new URLSearchParams({ artist, title })}`),
 };
 
 export const store = {
