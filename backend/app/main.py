@@ -313,4 +313,14 @@ def spotify_callback():
     return FileResponse(config.WEB_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
 
-app.mount("/", StaticFiles(directory=config.WEB_DIR, html=True), name="web")
+class _AppFiles(StaticFiles):
+    """App-Dateien immer beim Server nachfragen lassen: sonst mischt der Browser
+    nach einem Update alte und neue Dateien."""
+
+    async def get_response(self, path, scope):
+        res = await super().get_response(path, scope)
+        res.headers.setdefault("Cache-Control", "no-cache")
+        return res
+
+
+app.mount("/", _AppFiles(directory=config.WEB_DIR, html=True), name="web")

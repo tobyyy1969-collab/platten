@@ -183,7 +183,7 @@ function libraryHeader(view) {
   const filters = fs.length > 1 ? `<div class="chips"><span class="label">Quelle:</span>${['Alle', ...fs].map((f) => `<button class="chip" data-filter="${f}" aria-pressed="${active === f}">${f}</button>`).join('')}</div>` : '';
   return `<div class="stack" style="gap:16px;margin-bottom:24px">
     <div class="row" style="gap:24px;align-items:flex-end">
-      <h1 class="page">${mobile() ? 'Bibliothek' : KIND_TITLE[view] || tabs.find((t) => t[0] === view)[1]}</h1>
+      <h1 class="page">${mobile() ? 'Bibliothek' : KIND_TITLE[view] || tabs.find((t) => t[0] === view)?.[1] || 'Alben'}</h1>
       <div class="seg" role="group" aria-label="Ansicht">${tabs.map(([k, l]) => `<button data-go="#/${k}" aria-pressed="${view === k || (k === 'alben' && albumView)}">${l}</button>`).join('')}</div>
     </div>
     ${kindChips}

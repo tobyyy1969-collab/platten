@@ -1,11 +1,11 @@
 // Service Worker: App-Gerüst und Cover zwischenspeichern.
 // Musik wird nicht zwischengespeichert (das kommt mit dem Offline-Download).
-const SHELL = 'bb-shell-v7';
+const SHELL = 'bb-shell-v8';
 const COVERS = 'bb-covers-v1';
 const SHELL_FILES = ['/', '/css/app.css', '/js/app.js', '/js/lib.js', '/js/player.js', '/js/spotify.js', '/manifest.webmanifest', '/icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(SHELL).then((c) => c.addAll(SHELL_FILES)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(SHELL).then((c) => c.addAll(SHELL_FILES.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -29,7 +29,9 @@ self.addEventListener('fetch', (e) => {
   }
   if (url.pathname.startsWith('/api/')) return;
   // App-Gerüst: erst Netz (damit Updates sofort ankommen), sonst Zwischenspeicher
-  e.respondWith(fetch(e.request).then((res) => {
+  // Browser-Zwischenspeicher umgehen (nur nachfragen, ob sich etwas geändert hat), sonst kommen alte Dateien
+  const net = e.request.mode === 'navigate' ? fetch(e.request) : fetch(e.request, { cache: 'no-cache' });
+  e.respondWith(net.then((res) => {
     if (res.ok) caches.open(SHELL).then((c) => c.put(e.request, res.clone()));
     return res;
   }).catch(() => caches.match(e.request).then((r) => r || caches.match('/'))));
