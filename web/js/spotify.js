@@ -265,7 +265,9 @@ export async function playlist(id) {
   let next = page.next;
   while (next) { const d = await call(next); items.push(...(d.items ?? [])); next = d.next; }
   const tracks = items.map((it) => it.item || it.track).filter((t) => t && t.type === 'track' && t.uri && !t.is_local).map((t) => toTrack(t));
-  return { id: p.id, name: p.name, description: p.description, image: image(p.images, 640), owner: p.owner?.display_name, uri: p.uri, tracks };
+  const meId = (profile || await me().catch(() => null))?.id;
+  return { id: p.id, name: p.name, description: p.description, image: image(p.images, 640), owner: p.owner?.display_name, uri: p.uri, tracks,
+    mine: (!!meId && p.owner?.id === meId) || !!p.collaborative };
 }
 
 export async function createPlaylist(name) {
@@ -282,6 +284,16 @@ export async function createPlaylist(name) {
 export async function addToPlaylist(id, uris) {
   for (let i = 0; i < uris.length; i += 100) {
     await callEither([`/playlists/${id}/items`, `/playlists/${id}/tracks`], { method: 'POST', body: { uris: uris.slice(i, i + 100) } });
+  }
+}
+
+/** Titel aus einer Playlist entfernen (Spotify entfernt dabei alle Vorkommen dieses Titels). */
+export async function removeFromPlaylist(id, uri) {
+  try {
+    await call(`/playlists/${id}/items`, { method: 'DELETE', body: { items: [{ uri }] } });
+  } catch (e) {
+    if (![403, 404, 405].includes(e.status)) throw e;
+    await call(`/playlists/${id}/tracks`, { method: 'DELETE', body: { tracks: [{ uri }] } });
   }
 }
 

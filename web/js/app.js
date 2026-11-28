@@ -837,9 +837,28 @@ async function viewPlaylist(r) {
       <button class="btn" data-act="queue">Zur Warteschlange</button>
     </div>
     <div class="tracks">${tracks.map((t, i) => `<button class="track" data-i="${i}" data-id="${esc(t.id)}"><span class="n">${i + 1}</span>
-      <span class="tt">${esc(t.title)}<span class="ta">${artistLinks(t.artist)} · ${esc(t.album || '')}</span></span>${menuBtn(t.id)}<span class="d">${fmtTime(t.duration)}</span></button>`).join('')}</div>
+      <span class="tt">${esc(t.title)}<span class="ta">${artistLinks(t.artist)} · ${esc(t.album || '')}</span></span><span class="tbtns">${p.mine ? `<span class="tmenu tminus" role="button" tabindex="0" data-tminus="${i}" aria-label="Aus der Playlist entfernen" title="Aus der Playlist entfernen">−</span>` : ''}${menuBtn(t.id)}</span><span class="d">${fmtTime(t.duration)}</span></button>`).join('')}</div>
   </div>`;
   tracks.forEach(remember);
+  const removeAt = (i) => {
+    const t = tracks[i];
+    if (!t) return;
+    sheet('Aus der Playlist entfernen', `<p style="margin:0 0 12px;line-height:1.5">„${esc(t.title)}“ von ${esc(t.artist)} aus „${esc(p.name)}“ entfernen? Das gilt auch in Spotify.</p>
+      <button class="sheet-item" data-yes><b>Entfernen</b></button><button class="sheet-item" data-close-sheet><b>Abbrechen</b></button>`, (el) => {
+      el.querySelector('[data-yes]').onclick = async () => {
+        closeSheet();
+        try { await spotify.removeFromPlaylist(p.id, t.uri); } catch (e) { toast('Entfernen hat nicht geklappt: ' + e.message); return; }
+        playlistCache = null;
+        toast(`„${t.title}“ ist aus „${p.name}“ entfernt.`);
+        if (current.key === r.key) viewPlaylist(r);
+      };
+    });
+  };
+  $$('[data-tminus]', content).forEach((el) => {
+    const go = (e) => { if (e.type === 'keydown' && e.key !== 'Enter') return; e.preventDefault(); e.stopPropagation(); removeAt(+el.dataset.tminus); };
+    el.addEventListener('click', go);
+    el.addEventListener('keydown', go);
+  });
   $$('.track', content).forEach((b) => b.addEventListener('click', () => player.playList(tracks, +b.dataset.i)));
   content.querySelector('[data-act=play]').onclick = () => { if (player.shuffle) player.toggleShuffle(); player.playList(tracks, 0); };
   content.querySelector('[data-act=shuffle]').onclick = () => { if (!player.shuffle) player.toggleShuffle(); player.playList(tracks, Math.floor(Math.random() * tracks.length)); };

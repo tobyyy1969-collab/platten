@@ -302,3 +302,8 @@ button.link { color: var(--accent); font-weight: 600; text-align: left; }
 .lyrics .line.now { color: var(--text); }
 .lyr-block { margin-top: 24px; font-size: 16px; line-height: 1.6; color: var(--text-2); }
 .lyr-src { font-size: 12px; margin-top: 24px; }
+
+.tbtns { display: flex; gap: 2px; align-items: center; }
+.tminus { font-size: 20px; }
+.tminus:hover { background: #FBE9E7; color: #B3261E; }
+.track:hover .tbtns .tmenu, .tbtns .tmenu:focus-visible { opacity: 1; }
