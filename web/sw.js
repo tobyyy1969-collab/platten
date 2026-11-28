@@ -1,6 +1,6 @@
 // Service Worker: App-Gerüst und Cover zwischenspeichern.
 // Musik wird nicht zwischengespeichert (das kommt mit dem Offline-Download).
-const SHELL = 'bb-shell-v9';
+const SHELL = 'bb-shell-v10';
 const COVERS = 'bb-covers-v1';
 const SHELL_FILES = ['/', '/css/app.css', '/js/app.js', '/js/lib.js', '/js/player.js', '/js/spotify.js', '/manifest.webmanifest', '/icons/icon-192.png'];
 

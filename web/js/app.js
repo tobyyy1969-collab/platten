@@ -249,6 +249,11 @@ function kindDialog(a, done) {
   });
 }
 
+const wikiUrl = (lang, q) => `https://${lang}.wikipedia.org/w/index.php?search=${encodeURIComponent(q)}`;
+const wikiLinks = (qDe, qEn = qDe) => `<span class="wiki-links">Bei Wikipedia nachschlagen:
+  <a href="${wikiUrl('de', qDe)}" target="_blank" rel="noopener">Deutsch ↗</a>
+  <a href="${wikiUrl('en', qEn)}" target="_blank" rel="noopener">Englisch ↗</a></span>`;
+
 /** Interpreten als Verweise auf ihre Seite (mehrere, mit Komma getrennt, einzeln). */
 const artistLinks = (names) => String(names || '').split(', ').filter(Boolean)
   .map((n) => `<span class="alink" role="link" tabindex="0" data-artist="${esc(n)}">${esc(n)}</span>`).join(', ');
@@ -393,7 +398,7 @@ async function viewAlbum(r) {
       return `${head}<button class="track" data-i="${i}" data-id="${esc(t.id)}"><span class="n">${t.track || i + 1}</span>
         <span class="tt">${esc(t.title)}${sub}</span>${menuBtn(t.id)}<span class="d">${fmtTime(t.duration)}</span></button>`;
     }).join('');
-    const wiki = `https://de.wikipedia.org/w/index.php?search=${encodeURIComponent(`${a.title} ${a.artist === VA ? '' : a.artist} Album`)}`;
+    const wikiQ = `${a.title} ${a.artist === VA ? '' : a.artist}`;
     const canPlaylist = a.sources.Spotify && spotify.isConnected();
     content.innerHTML = `<div class="album-layout">
       <div class="stack" style="gap:28px;min-width:0">
@@ -423,7 +428,7 @@ async function viewAlbum(r) {
           ${['FLAC', 'MP3'].filter((f) => a.sources[f] || lib.local.some((x) => x.formats.includes(f))).map((f) => a.sources[f] ? `<span>als ${f} auf dem Server (${esc(sourceLabel(f, a.sources[f]))})</span>` : `<span class="muted">nicht als ${f}</span>`).join('')}
           ${spotifyLine()}
         </div>
-        <div class="box about"><h3>Über das Album</h3>${a.label ? `<p>Label: ${esc(a.label)}</p>` : ''}<a href="${wiki}" target="_blank" rel="noopener">Bei Wikipedia nachschlagen ↗</a></div>
+        <div class="box about"><h3>Über das Album</h3>${a.label ? `<p>Label: ${esc(a.label)}</p>` : ''}${wikiLinks(wikiQ + ' Album', wikiQ + ' album')}</div>
       </aside>
     </div>`;
     $$('[data-src]', content).forEach((b) => b.addEventListener('click', () => {
@@ -485,7 +490,8 @@ async function viewArtist(r) {
         <div class="row" style="margin-top:4px">
           <button class="btn primary" data-act="all"><svg viewBox="0 0 24 24" class="fill" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>Alles abspielen</button>
           <button class="btn" data-act="shuffle">Zufällig</button>
-          <a class="btn" href="https://de.wikipedia.org/w/index.php?search=${encodeURIComponent(d.name)}" target="_blank" rel="noopener">Wikipedia ↗</a>
+          <a class="btn" href="${wikiUrl('de', d.name)}" target="_blank" rel="noopener">Wikipedia DE ↗</a>
+          <a class="btn" href="${wikiUrl('en', d.name)}" target="_blank" rel="noopener">Wikipedia EN ↗</a>
         </div>
       </div>
     </div>
@@ -634,7 +640,7 @@ function viewPlayer(r) {
         <span class="qt"><b>${esc(q.title)}</b><span>${artistLinks(q.artist)} · ${esc(q.album || '')}</span></span>
         <span class="badge ${esc(q.format)}">${esc(q.format)}</span><span class="muted">${fmtTime(q.duration)}</span></button>`).join('')}</div>`,
     info: () => `<div class="stack" style="gap:12px;max-width:620px"><p style="margin:0;line-height:1.6">${esc(t.title)} von ${esc(t.artist)}${t.album ? `, aus „${esc(t.album)}“` : ''}${t.year ? ` (${t.year})` : ''}.</p>
-      <a href="https://de.wikipedia.org/w/index.php?search=${encodeURIComponent(`${t.title} ${t.artist}`)}" target="_blank" rel="noopener">Bei Wikipedia nachschlagen ↗</a></div>`,
+      ${wikiLinks(`${t.title} ${t.artist}`)}</div>`,
   };
   const where = t.source === 'spotify'
     ? `${spotify.playbackMode() === 'connect' ? `<button class="link" data-device>${esc(spotifyTarget())}</button>` : esc(spotifyTarget())}`
