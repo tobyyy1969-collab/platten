@@ -832,7 +832,14 @@ async function addToPlaylistDialog(uris, label) {
 
 async function viewPlaylist(r) {
   if (!spotify.isConnected()) { content.innerHTML = `<h1 class="page">Playlist</h1>${connectPrompt('Playlists')}`; return; }
-  const p = await spotify.playlist(r.arg);
+  let p;
+  try {
+    p = await spotify.playlist(r.arg);
+  } catch (e) {
+    if (![403, 404].includes(e.status)) throw e;
+    if (current.key === r.key) await lockedPlaylist(r.arg);
+    return;
+  }
   if (current.key !== r.key) return;
   const tracks = p.tracks;
   content.innerHTML = `<div class="stack" style="gap:28px">
@@ -877,6 +884,26 @@ async function viewPlaylist(r) {
   content.querySelector('[data-act=shuffle]').onclick = () => { if (!player.shuffle) player.toggleShuffle(); player.playList(tracks, Math.floor(Math.random() * tracks.length)); };
   content.querySelector('[data-act=queue]').onclick = () => { player.enqueue(tracks, false); toast(`„${p.name}“ steht in der Warteschlange.`); };
   markPlaying();
+}
+
+/** Fremde Playlists (z. B. von Radiosendern oder Spotify selbst): Spotify gibt deren Titel
+ *  an Apps im Entwicklungsmodus nicht heraus. Dann wenigstens zeigen, was los ist. */
+async function lockedPlaylist(id) {
+  const info = (await loadPlaylists().catch(() => [])).find((x) => x.id === id) || { name: 'Playlist' };
+  content.innerHTML = `<div class="stack" style="gap:28px">
+    <div class="album-head">${coverHtml({ id: 'pl:' + id, title: info.name, artist: info.owner || '', image: info.image }, 600)}
+      <div class="stack" style="gap:10px;min-width:0">
+        <span class="kicker">Playlist</span>
+        <h1 class="album-title">${esc(info.name)}</h1>
+        <span class="muted">${[info.owner, info.count ? `${info.count} Titel` : ''].filter(Boolean).map(esc).join(' · ')}</span>
+      </div>
+    </div>
+    <div class="box" style="max-width:640px"><h3>Spotify gibt die Titel dieser Playlist nicht frei</h3>
+      <p style="margin:0;line-height:1.6">Die Playlist gehört nicht dir${info.owner ? `, sondern „${esc(info.owner)}“` : ''}. Spotify zeigt fremde Playlists nur in der eigenen App an, nicht in BulldogBeats.
+      Deine eigenen Playlists funktionieren ganz normal.</p>
+      <a class="btn" style="align-self:flex-start;margin-top:6px" href="https://open.spotify.com/playlist/${encodeURIComponent(id)}" target="_blank" rel="noopener">In Spotify öffnen ↗</a>
+    </div>
+  </div>`;
 }
 
 function viewOffline() {
