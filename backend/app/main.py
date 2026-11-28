@@ -9,6 +9,8 @@ import re
 import threading
 import time
 
+import anyio
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -219,16 +221,21 @@ def cover(aid: str, s: int = 300):
 
 # ---------------------------------------------------------------- Streaming
 
-def _file_range(path: str, start: int, end: int, chunk: int = 256 * 1024):
-    with open(path, "rb") as f:
-        f.seek(start)
+async def _file_range(path: str, start: int, end: int, chunk: int = 256 * 1024):
+    """Liest die Datei stückweise. Asynchron, damit ein langsamer oder pausierter
+    Browser keinen Server-Thread blockiert (sonst hängt nach vielen Liedern die ganze App)."""
+    f = await anyio.to_thread.run_sync(open, path, "rb")
+    try:
+        await anyio.to_thread.run_sync(f.seek, start)
         left = end - start + 1
         while left > 0:
-            data = f.read(min(chunk, left))
+            data = await anyio.to_thread.run_sync(f.read, min(chunk, left))
             if not data:
                 break
             left -= len(data)
             yield data
+    finally:
+        f.close()
 
 
 @app.api_route("/api/stream/{tid}", methods=["GET", "HEAD"])
