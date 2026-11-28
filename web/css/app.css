@@ -139,12 +139,13 @@ h2.section { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -0.4p
 .about p { margin: 0; font-size: 14px; line-height: 1.6; color: var(--text-2); }
 
 /* ---------------------------------------------------------------- Interpret */
-.artist-head { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 24px; padding-top: 8px; }
-.artist-head .cover { width: 320px; border-radius: 50%; padding: 0; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12), 0 24px 56px rgba(0, 0, 0, 0.18); }
-.artist-head .cover img { border-radius: 50%; }
+.artist-head { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 24px; }
+.artist-head .cover.artist-photo { width: 100%; aspect-ratio: auto; height: clamp(300px, 36vw, 520px); border-radius: 16px; padding: 0; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12), 0 24px 56px rgba(0, 0, 0, 0.16); }
+.artist-photo img.bg { object-fit: cover; filter: blur(30px) brightness(0.85); transform: scale(1.2); }
+.artist-photo img.fg { object-fit: contain; background: transparent; }
 .artist-head .stack { align-items: center; }
 .artist-head .row { justify-content: center; }
-.artist-photo { align-items: center; justify-content: center; font-size: 88px; }
+.artist-photo { align-items: center; justify-content: center; font-size: 120px; }
 .artist-name { margin: 0; font-size: 52px; font-weight: 800; letter-spacing: -1.4px; line-height: 1.05; }
 
 /* ---------------------------------------------------------------- Suche */
@@ -227,8 +228,8 @@ input[type="range"]::-moz-range-thumb { width: 12px; height: 12px; border: 0; bo
   .album-artist { font-size: 16px; }
   .album-actions { justify-content: center; }
   .track { grid-template-columns: 28px minmax(0, 1fr) auto 44px; padding: 10px 2px; min-height: 48px; }
-  .artist-head .cover { width: 230px; max-width: 70vw; }
-  .artist-photo { font-size: 64px; }
+  .artist-head .cover.artist-photo { height: 300px; border-radius: 12px; }
+  .artist-photo { font-size: 72px; }
   .artist-name { font-size: 30px; }
   .mobile-search { display: flex; }
   .mobile-search .searchbox { display: flex; max-width: none; height: 44px; border-radius: 12px; }

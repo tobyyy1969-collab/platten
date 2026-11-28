@@ -482,7 +482,7 @@ async function viewArtist(r) {
   const all = [...own, ...spOnly].sort((x, y) => (x.year || 0) - (y.year || 0));
   const latest = all[all.length - 1];
   content.innerHTML = `<div class="stack" style="gap:30px">
-    <div class="artist-head">${artistCircle(d.name, latest).replace('class="cover"', 'class="cover artist-photo"')}
+    <div class="artist-head">${artistHero(d.name, latest ? coverSrc(latest, 600) : '')}
       <div class="stack" style="gap:12px;min-width:0">
         <span class="kicker">Interpret</span>
         <h1 class="artist-name">${esc(d.name)}</h1>
@@ -516,6 +516,13 @@ async function viewArtist(r) {
   content.querySelector('[data-act=shuffle]').onclick = async () => { const t = await collect(); if (!player.shuffle) player.toggleShuffle(); player.playList(t, Math.floor(Math.random() * t.length)); };
 }
 
+/** Breites Interpretenbild: das Foto in voller Höhe, daneben unscharf aufgefüllt. */
+const heroImgs = (src) => `<img class="bg" src="${esc(src)}" alt="" aria-hidden="true" onerror="this.remove()"><img class="fg" src="${esc(src)}" alt="" onerror="this.remove()">`;
+function artistHero(name, src) {
+  const [bg, fg] = colorsFor(name);
+  return `<div class="cover artist-photo" style="background:${bg};color:${fg}">${esc(initials(name))}${src ? heroImgs(src) : ''}</div>`;
+}
+
 /** Interpretenseite ergänzen: Foto und die Alben bei Spotify, die nicht in der Sammlung sind. */
 async function artistFromSpotify(name, shown, key) {
   try {
@@ -523,8 +530,8 @@ async function artistFromSpotify(name, shown, key) {
     if (!ar || current.key !== key) return;
     const photo = content.querySelector('.artist-photo');
     if (photo && ar.image) {
-      photo.querySelector('img')?.remove();
-      photo.insertAdjacentHTML('beforeend', `<img src="${esc(ar.image)}" alt="" onerror="this.remove()">`);
+      photo.querySelectorAll('img').forEach((i) => i.remove());
+      photo.insertAdjacentHTML('beforeend', heroImgs(ar.image));
     }
     const albums = await spotify.artistAlbums(ar.id);
     if (current.key !== key) return;
