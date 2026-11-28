@@ -181,6 +181,40 @@ function bindHeader() {
   $$('[data-filter]', content).forEach((b) => b.addEventListener('click', () => { prefs.filter = b.dataset.filter; store.set('filter', prefs.filter); memory.clear(); route(); }));
 }
 
+/** Titel, die gerade in einer Liste stehen (für das Titel-Menü „+“). */
+const rowTracks = new Map();
+const remember = (t) => rowTracks.set(String(t.id), t);
+const menuBtn = (id) => `<span class="tmenu" role="button" tabindex="0" data-tmenu="${esc(id)}" aria-label="Zur Playlist oder Warteschlange" title="Zur Playlist oder Warteschlange">+</span>`;
+
+/** Spotify-Adresse eines Titels; eigene Dateien werden bei Spotify gesucht. */
+async function spotifyUriFor(t) {
+  if (t.uri) return t.uri;
+  const artist = String(t.artist || '').split(', ')[0];
+  const res = await spotify.search(`track:${t.title} artist:${artist}`, 'track', 10).catch(() => null);
+  const items = (res?.tracks?.items ?? []).filter(Boolean);
+  const nt = spotify.norm(t.title), na = spotify.norm(artist);
+  const byArtist = items.filter((x) => (x.artists ?? []).some((a) => spotify.norm(a.name) === na));
+  const hit = byArtist.find((x) => spotify.norm(x.name) === nt) || byArtist.find((x) => spotify.norm(x.name).startsWith(nt));
+  return hit?.uri || null;
+}
+
+function trackMenu(t) {
+  const canPl = spotify.isConnected();
+  sheet(t.title, `
+    <button class="sheet-item" data-m="playlist"${canPl ? '' : ' disabled'}><b>Zur Playlist …</b>${canPl ? '' : '<span class="muted">Dafür mit Spotify verbinden</span>'}</button>
+    <button class="sheet-item" data-m="next"><b>Als Nächstes spielen</b></button>
+    <button class="sheet-item" data-m="queue"><b>Zur Warteschlange</b></button>`, (el) => {
+    el.querySelector('[data-m=next]').onclick = () => { closeSheet(); player.enqueue([t], true); toast(`„${t.title}“ kommt als Nächstes.`); };
+    el.querySelector('[data-m=queue]').onclick = () => { closeSheet(); player.enqueue([t], false); toast(`„${t.title}“ steht in der Warteschlange.`); };
+    el.querySelector('[data-m=playlist]').onclick = async (e) => {
+      e.currentTarget.querySelector('b').textContent = 'Suche bei Spotify …';
+      const uri = await spotifyUriFor(t);
+      if (!uri) { closeSheet(); toast(`„${t.title}“ gibt es bei Spotify nicht, deshalb kann es nicht in eine Spotify-Playlist.`); return; }
+      addToPlaylistDialog([uri], t.title);
+    };
+  });
+}
+
 /** Interpreten als Verweise auf ihre Seite (mehrere, mit Komma getrennt, einzeln). */
 const artistLinks = (names) => String(names || '').split(', ').filter(Boolean)
   .map((n) => `<span class="alink" role="link" tabindex="0" data-artist="${esc(n)}">${esc(n)}</span>`).join(', ');
@@ -321,7 +355,7 @@ async function viewAlbum(r) {
       lastDisc = disc;
       const sub = t.artist && t.artist !== a.artist && t.artist !== a.artists ? `<span class="ta">${artistLinks(t.artist)}</span>` : '';
       return `${head}<button class="track" data-i="${i}" data-id="${esc(t.id)}"><span class="n">${t.track || i + 1}</span>
-        <span class="tt">${esc(t.title)}${sub}</span><span></span><span class="d">${fmtTime(t.duration)}</span></button>`;
+        <span class="tt">${esc(t.title)}${sub}</span>${menuBtn(t.id)}<span class="d">${fmtTime(t.duration)}</span></button>`;
     }).join('');
     const wiki = `https://de.wikipedia.org/w/index.php?search=${encodeURIComponent(`${a.title} ${a.artist === VA ? '' : a.artist} Album`)}`;
     const canPlaylist = a.sources.Spotify && spotify.isConnected();
@@ -360,6 +394,7 @@ async function viewAlbum(r) {
       src = b.dataset.src; prefs.source[a.id] = src; store.set('source', prefs.source); render();
     }));
     const pt = playerTracks(a, tracks);
+    pt.forEach(remember);
     $$('.track', content).forEach((b) => b.addEventListener('click', () => player.playList(pt, +b.dataset.i)));
     const act = (k, fn) => { const b = content.querySelector(`[data-act=${k}]`); if (b) b.onclick = fn; };
     act('play', () => { if (player.shuffle) player.toggleShuffle(); player.playList(pt, 0); });
@@ -477,7 +512,7 @@ function onSearchInput(value) {
   }, 260);
 }
 
-const trackRow = (t) => `<button class="track" data-id="${esc(t.id)}"><span class="n"></span><span class="tt">${esc(t.title)}<span class="ta">${artistLinks(t.artist)} · ${esc(t.album || '')}</span></span><span></span><span class="d">${fmtTime(t.duration)}</span></button>`;
+const trackRow = (t) => `<button class="track" data-id="${esc(t.id)}"><span class="n"></span><span class="tt">${esc(t.title)}<span class="ta">${artistLinks(t.artist)} · ${esc(t.album || '')}</span></span>${menuBtn(t.id)}<span class="d">${fmtTime(t.duration)}</span></button>`;
 
 async function viewSearch(r) {
   const q = r.params.get('q') || '';
@@ -501,7 +536,7 @@ async function viewSearch(r) {
 
   const tracksById = new Map();
   const group = (fmt, al, tr, note = '') => {
-    tr.forEach((t) => tracksById.set(String(t.id), t));
+    tr.forEach((t) => { tracksById.set(String(t.id), t); remember(t); });
     if (!al.length && !tr.length && !note) return '';
     return `<section class="result-group">
       <div class="row"><span class="group-badge badge ${fmt}">${fmt}</span><span class="muted" style="font-size:13px">${note || `${al.length} ${al.length === 1 ? 'Album' : 'Alben'} · ${tr.length} Titel`}</span></div>
@@ -548,6 +583,7 @@ const spotifyTarget = () => (spotify.playbackMode() === 'connect' ? `Spotify-App
 function viewPlayer(r) {
   const tab = r.params.get('tab') || 'lyrics';
   const t = player.current;
+  if (t) remember(t);
   if (!t) {
     content.innerHTML = `<div class="empty"><strong>Gerade läuft nichts.</strong><br>Wähle ein Album und tippe auf „Abspielen“.</div>`;
     return;
@@ -575,7 +611,8 @@ function viewPlayer(r) {
         <span style="font-size:16px;font-weight:600">${artistLinks(t.artist)}</span>
         ${t.album_id ? `<a href="#/album/${encodeURIComponent(t.album_id)}" class="muted">${esc(t.album || '')}${t.year ? ' · ' + t.year : ''}</a>` : ''}
       </div>
-      <div class="row"><span class="badge ${esc(t.format)}">${esc(t.format)}</span><span class="muted" style="font-size:12.5px">${where}</span></div>
+      <div class="row"><span class="badge ${esc(t.format)}">${esc(t.format)}</span><span class="muted" style="font-size:12.5px">${where}</span>
+        <button class="link" data-tmenu="${esc(t.id)}" style="margin-left:auto">＋ Zur Playlist</button></div>
       <div class="np-controls">
         <div class="pb-progress" style="max-width:none"><span data-cur>0:00</span><input type="range" min="0" max="1000" value="0" data-seek aria-label="Position im Titel"><span data-dur>0:00</span></div>
         <div class="buttons">
@@ -695,8 +732,9 @@ async function viewPlaylist(r) {
       <button class="btn" data-act="queue">Zur Warteschlange</button>
     </div>
     <div class="tracks">${tracks.map((t, i) => `<button class="track" data-i="${i}" data-id="${esc(t.id)}"><span class="n">${i + 1}</span>
-      <span class="tt">${esc(t.title)}<span class="ta">${artistLinks(t.artist)} · ${esc(t.album || '')}</span></span><span></span><span class="d">${fmtTime(t.duration)}</span></button>`).join('')}</div>
+      <span class="tt">${esc(t.title)}<span class="ta">${artistLinks(t.artist)} · ${esc(t.album || '')}</span></span>${menuBtn(t.id)}<span class="d">${fmtTime(t.duration)}</span></button>`).join('')}</div>
   </div>`;
+  tracks.forEach(remember);
   $$('.track', content).forEach((b) => b.addEventListener('click', () => player.playList(tracks, +b.dataset.i)));
   content.querySelector('[data-act=play]').onclick = () => { if (player.shuffle) player.toggleShuffle(); player.playList(tracks, 0); };
   content.querySelector('[data-act=shuffle]').onclick = () => { if (!player.shuffle) player.toggleShuffle(); player.playList(tracks, Math.floor(Math.random() * tracks.length)); };
@@ -816,6 +854,16 @@ const openArtist = (e) => {
   location.hash = '#/interpret/' + encodeURIComponent(el.dataset.artist);
 };
 document.addEventListener('click', openArtist, true);
+const openTrackMenu = (e) => {
+  const el = e.target.closest?.('[data-tmenu]');
+  if (!el || (e.type === 'keydown' && e.key !== 'Enter')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const t = rowTracks.get(el.dataset.tmenu);
+  if (t) trackMenu(t);
+};
+document.addEventListener('click', openTrackMenu, true);
+document.addEventListener('keydown', openTrackMenu, true);
 document.addEventListener('keydown', openArtist, true);
 
 document.addEventListener('click', (e) => {
