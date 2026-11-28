@@ -1,99 +1,95 @@
 <!doctype html>
 <html lang="de">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Plattenregal</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%23222'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%23e0663a'/%3E%3Ccircle cx='16' cy='16' r='1.5' fill='%23222'/%3E%3C/svg%3E">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/app.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BulldogBeats</title>
+<meta name="theme-color" content="#F3F3F0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="BulldogBeats">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
-  <!-- Anmeldung -->
-  <div id="login" class="login" hidden>
-    <form id="login-form" class="login-card">
-      <div class="brand big"><span class="disc"></span>Plattenregal</div>
-      <p class="muted">Melde dich mit deinem Navidrome-Benutzer an.</p>
-      <label>Benutzername<input name="user" autocomplete="username" required></label>
-      <label>Passwort<input name="password" type="password" autocomplete="current-password" required></label>
-      <p id="login-error" class="error" hidden></p>
-      <button class="btn primary" type="submit">Anmelden</button>
-    </form>
-  </div>
+<div class="app">
+  <nav class="sidebar" aria-label="Hauptnavigation">
+    <a class="brand" href="#/alben"><span class="logo">BB</span><span>BulldogBeats</span></a>
+    <div class="nav-group">
+      <div class="nav-title">Bibliothek</div>
+      <a class="nav-link" href="#/alben" data-nav="alben">Alben</a>
+      <a class="nav-link sub" href="#/solo" data-nav="solo">Solo-Alben</a>
+      <a class="nav-link sub" href="#/sampler" data-nav="sampler">Sampler</a>
+      <a class="nav-link sub" href="#/soundtracks" data-nav="soundtracks">Soundtracks</a>
+      <a class="nav-link" href="#/interpreten" data-nav="interpreten">Interpreten</a>
+      <a class="nav-link" href="#/jahre" data-nav="jahre">Jahre</a>
+      <a class="nav-link" href="#/suche" data-nav="suche">Suche</a>
+      <a class="nav-link" href="#/wiedergabe" data-nav="wiedergabe">Wiedergabe</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-title">Playlists</div>
+      <a class="nav-link" href="#/playlists" data-nav="playlists">Alle Playlists</a>
+    </div>
+    <div class="sources" id="sources"></div>
+  </nav>
 
-  <div id="app" class="app" hidden>
-    <aside class="sidebar">
-      <div class="brand"><span class="disc"></span>Plattenregal</div>
-      <form id="search-form" class="search">
-        <svg viewBox="0 0 24 24" class="ico"><path d="M10.5 4a6.5 6.5 0 0 1 5.2 10.4l4.4 4.4-1.4 1.4-4.4-4.4A6.5 6.5 0 1 1 10.5 4Zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z"/></svg>
-        <input id="search-input" type="search" placeholder="Suchen" autocomplete="off">
-      </form>
-      <nav class="nav">
-        <a href="#/alben" data-nav="alben">Meine Alben</a>
-        <a href="#/interpreten" data-nav="interpreten">Interpreten</a>
-        <a href="#/sampler" data-nav="sampler">Sampler</a>
-        <a href="#/favoriten" data-nav="favoriten">Favoriten</a>
-      </nav>
-      <div class="nav-head">
-        <span>Playlists</span>
-        <button id="new-playlist" class="icon-btn small" title="Neue Playlist">+</button>
-      </div>
-      <nav id="playlist-nav" class="nav playlists"></nav>
-      <div class="sidebar-foot">
-        <span id="user-name" class="muted"></span>
-        <button id="logout" class="link-btn">Abmelden</button>
-      </div>
-    </aside>
+  <main class="main">
+    <header class="topbar">
+      <button class="icon-btn back" id="back" aria-label="Zurück" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+      </button>
+      <label class="searchbox">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+        <input id="search" type="search" placeholder="Alben, Interpreten, Titel suchen" autocomplete="off" aria-label="Suchen">
+        <kbd>⌘F</kbd>
+      </label>
+      <div class="device"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/></svg><span>Wiedergabe auf: <strong id="device-name">diesem Gerät</strong></span></div>
+    </header>
+    <div class="content" id="content" tabindex="-1"></div>
+  </main>
 
-    <main id="main" class="main" tabindex="-1"></main>
-
-    <aside id="side-panel" class="side-panel" hidden>
-      <div class="panel-tabs">
-        <button data-panel="queue">Warteschlange</button>
-        <button data-panel="lyrics">Lyrics</button>
-        <button id="panel-close" class="icon-btn small" title="Schließen">×</button>
+  <footer class="playerbar" id="playerbar">
+    <button class="pb-now" id="pb-now" aria-label="Wiedergabe öffnen">
+      <span class="pb-cover" id="pb-cover"></span>
+      <span class="pb-text"><span class="pb-title" id="pb-title">Nichts ausgewählt</span><span class="pb-sub" id="pb-sub"></span></span>
+    </button>
+    <div class="pb-center">
+      <div class="pb-controls">
+        <button class="icon-btn small" id="btn-shuffle" aria-label="Zufallswiedergabe" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h3c4 0 6 10 10 10h5M18 14l3 3-3 3M3 17h3c1.6 0 2.8-1.6 3.8-3.5M13 9.5C14 8 15 7 16 7h5M18 4l3 3-3 3"/></svg></button>
+        <button class="icon-btn" id="btn-prev" aria-label="Vorheriger Titel"><svg viewBox="0 0 24 24" class="fill" aria-hidden="true"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
+        <button class="play-btn" id="btn-play" aria-label="Wiedergabe"><svg viewBox="0 0 24 24" class="fill" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg></button>
+        <button class="icon-btn" id="btn-next" aria-label="Nächster Titel"><svg viewBox="0 0 24 24" class="fill" aria-hidden="true"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
+        <button class="icon-btn small" id="btn-repeat" aria-label="Wiederholen" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4"/></svg></button>
       </div>
-      <div id="panel-body" class="panel-body"></div>
-    </aside>
-
-    <footer id="player" class="player">
-      <div class="np">
-        <img id="np-cover" alt="" hidden>
-        <div class="np-text">
-          <a id="np-title" class="np-title"></a>
-          <a id="np-artist" class="np-artist muted"></a>
-        </div>
+      <div class="pb-progress">
+        <span id="t-cur">0:00</span>
+        <input type="range" id="seek" min="0" max="1000" value="0" aria-label="Position im Titel">
+        <span id="t-dur">0:00</span>
       </div>
-      <div class="transport">
-        <div class="buttons">
-          <button id="btn-shuffle" class="icon-btn" title="Zufallswiedergabe"><svg viewBox="0 0 24 24" class="ico"><path d="M17 3l4 4-4 4V8h-2.6l-2.3 3.1-1.3-1.7L13 6h4V3ZM3 6h4.5l9 12H17v-3l4 4-4 4v-3h-1.5l-9-12H3V6Zm0 10h4l1.7-2.3 1.3 1.7L7.5 18H3v-2Z"/></svg></button>
-          <button id="btn-prev" class="icon-btn" title="Zurück"><svg viewBox="0 0 24 24" class="ico"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
-          <button id="btn-play" class="play-btn" title="Abspielen/Pause"><svg viewBox="0 0 24 24" class="ico"><path id="play-path" d="M8 5v14l11-7z"/></svg></button>
-          <button id="btn-next" class="icon-btn" title="Weiter"><svg viewBox="0 0 24 24" class="ico"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
-          <button id="btn-repeat" class="icon-btn" title="Wiederholen"><svg viewBox="0 0 24 24" class="ico"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7Zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4Z"/></svg><span id="repeat-one" class="badge" hidden>1</span></button>
-        </div>
-        <div class="seek">
-          <span id="t-cur" class="time">0:00</span>
-          <input id="seek" type="range" min="0" max="1000" value="0" aria-label="Position">
-          <span id="t-dur" class="time">0:00</span>
-        </div>
-      </div>
-      <div class="extras">
-        <span id="np-format" class="format"></span>
-        <button id="btn-lyrics" class="icon-btn" title="Lyrics"><svg viewBox="0 0 24 24" class="ico"><path d="M4 4h16v12H7l-3 3V4Zm3 4v2h10V8H7Zm0 3v2h7v-2H7Z"/></svg></button>
-        <button id="btn-queue" class="icon-btn" title="Warteschlange"><svg viewBox="0 0 24 24" class="ico"><path d="M3 6h13v2H3zm0 5h13v2H3zm0 5h9v2H3zm15-1V9l5 4z"/></svg></button>
-        <svg viewBox="0 0 24 24" class="ico muted vol-ico"><path d="M4 9h4l5-4v14l-5-4H4V9Zm12.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4Z"/></svg>
-        <input id="volume" type="range" min="0" max="1" step="0.01" aria-label="Lautstärke">
-      </div>
-    </footer>
-  </div>
+    </div>
+    <div class="pb-right">
+      <a class="icon-btn" href="#/wiedergabe?tab=lyrics" aria-label="Liedtext"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h11M4 18h7"/></svg></a>
+      <a class="icon-btn" href="#/wiedergabe?tab=queue" aria-label="Warteschlange"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h12M4 12h12M4 18h7M18 15v6M15 18h6"/></svg></a>
+      <span class="hint">Leertaste: Pause · ← →: Titel</span>
+      <input type="range" id="volume" min="0" max="100" value="100" aria-label="Lautstärke">
+    </div>
+    <button class="pb-mini-play" id="btn-mini-play" aria-label="Wiedergabe"><svg viewBox="0 0 24 24" class="fill" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg></button>
+  </footer>
 
-  <div id="toast" class="toast" hidden></div>
-  <div id="menu" class="menu" hidden></div>
-  <dialog id="dialog" class="dialog"></dialog>
-
-  <script type="module" src="js/app.js"></script>
+  <nav class="tabbar" aria-label="Navigation">
+    <a href="#/alben" data-tab="alben"><span class="bar"></span>Bibliothek</a>
+    <a href="#/suche" data-tab="suche"><span class="bar"></span>Suche</a>
+    <a href="#/playlists" data-tab="playlists"><span class="bar"></span>Playlists</a>
+    <a href="#/offline" data-tab="offline"><span class="bar"></span>Offline</a>
+  </nav>
+</div>
+<audio id="audio" preload="auto"></audio>
+<script type="module" src="/js/app.js"></script>
 </body>
 </html>

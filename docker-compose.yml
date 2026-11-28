@@ -1,37 +1,35 @@
-# Plattenregal: eigene Oberfläche + Navidrome als Musikserver
-# Start:  docker compose up -d
 services:
-  navidrome:
-    image: deluan/navidrome:0.64.2
-    container_name: plattenregal-navidrome
+  bulldogbeats:
+    build: .
+    image: bulldogbeats:latest
+    container_name: bulldogbeats
     restart: unless-stopped
     user: "${PUID:-1000}:${PGID:-1000}"
     ports:
-      - "${NAVIDROME_PORT:-4533}:4533"     # Verwaltung (Benutzer, Scan) unter http://SERVER:4533
+      - "${PORT:-8484}:8080"
     environment:
-      ND_SCANNER_SCHEDULE: "@every 1h"     # neue Alben stündlich einlesen
-      ND_SCANNER_WATCHERWAIT: "10s"        # Änderungen im Ordner zusätzlich sofort erkennen
-      ND_SUBSONIC_ARTISTPARTICIPATIONS: "true"   # Interpreten-Seite zeigt auch Sampler, auf denen sie vorkommen
-      ND_LYRICSPRIORITY: ".lrc,.txt,embedded"
-      ND_ENABLESTARRATING: "true"
-      ND_ENABLEFAVOURITES: "true"
-      ND_ENABLEDOWNLOADS: "true"
-      ND_DEFAULTLANGUAGE: "de"
-      ND_LOGLEVEL: "info"
-      # Künstlerfotos kommen automatisch von Deezer; mit Last.fm-Schlüssel zusätzlich Biografien
-      ND_LASTFM_APIKEY: "${LASTFM_APIKEY:-}"
-      ND_LASTFM_SECRET: "${LASTFM_SECRET:-}"
+      MUSIC_DIRS: /music/flac,/music/mp3
+      RESCAN_HOURS: ${RESCAN_HOURS:-6}
+      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
     volumes:
-      - ./data/navidrome:/data
-      - "${MUSIC_DIR:?Bitte MUSIC_DIR in der Datei .env setzen}:/music:ro"   # nur lesen: deine FLACs werden nie verändert
+      # Musik vorerst nur lesend. Für die Tag-Bearbeitung (später) wird ":ro" entfernt.
+      - ${FLAC_DIR:?FLAC_DIR in .env eintragen}:/music/flac:ro
+      - ${MP3_DIR:-./ohne-mp3}:/music/mp3:ro
+      - ./data:/data
 
-  web:
-    image: nginx:1.29-alpine
-    container_name: plattenregal-web
+  # Optional: https://<server>.<tailnet>.ts.net auch direkt im Heimnetz (siehe README).
+  # Einschalten mit COMPOSE_PROFILES=heimnetz in .env.
+  heimnetz:
+    image: caddy:2.8.4
+    container_name: bulldogbeats-heimnetz
+    profiles: ["heimnetz"]
     restart: unless-stopped
-    depends_on: [navidrome]
+    depends_on: [bulldogbeats]
     ports:
-      - "${WEB_PORT:-8080}:80"             # Oberfläche unter http://SERVER:8080
+      - "${LAN_IP:-0.0.0.0}:443:443"
+    environment:
+      TS_HOST: ${TS_HOST:-}
     volumes:
-      - ./web:/usr/share/nginx/html:ro
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./Caddyfile.heimnetz:/etc/caddy/Caddyfile:ro
+      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock
+      - ./data/caddy:/data

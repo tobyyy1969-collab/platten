@@ -1,160 +1,226 @@
-// Wiedergabe und Warteschlange. Spielt die FLAC-Dateien direkt im Browser ab.
-// Für Schritt 2 (Spotify) bekommt jeder Titel ein Feld "source"; hier gibt es vorerst nur "local".
-import * as api from './api.js';
+// Wiedergabe: eigene Dateien im Browser (<audio>), Spotify-Titel über Spotify
+// (Browser-Player am Mac, Spotify Connect am iPhone). Eine gemeinsame Warteschlange.
+import { api, store } from './lib.js';
+import * as spotify from './spotify.js';
 
-const audio = new Audio();
-audio.preload = 'auto';
+export class Player extends EventTarget {
+  constructor(audio) {
+    super();
+    this.audio = audio;
+    this.queue = [];      // Titel-Objekte
+    this.order = [];      // Abspielreihenfolge (Indizes in queue)
+    this.pos = -1;        // Position in order
+    this.shuffle = false;
+    this.repeat = 'off';  // off | all | one
+    this.engine = 'local';
+    this.sp = { pos: 0, dur: 0, paused: true };
+    this.spTimer = null;
+    this.audio.volume = store.get('volume', 1);
 
-const state = {
-  queue: [],
-  index: -1,
-  shuffle: false,
-  repeat: 'off', // off | all | one
-};
+    const emit = (type) => this.dispatchEvent(new Event(type));
+    this.audio.addEventListener('timeupdate', () => emit('time'));
+    this.audio.addEventListener('durationchange', () => emit('time'));
+    this.audio.addEventListener('play', () => emit('state'));
+    this.audio.addEventListener('pause', () => emit('state'));
+    this.audio.addEventListener('ended', () => this.onEnded());
+    this.audio.addEventListener('error', () => this.onAudioError());
 
-const listeners = new Set();
-const emit = (what) => listeners.forEach(fn => fn(what));
-export const on = fn => listeners.add(fn);
+    spotify.on((ev) => {
+      if (this.engine !== 'spotify') return;
+      if (ev === 'ended') this.onEnded();
+      else if (ev === 'state') this.pollSpotify(true);
+      else if (ev?.type === 'remote-track') this.followRemote(ev.uri);
+      else if (ev?.type === 'error') this.fail(ev.message);
+    });
 
-export const audioEl = audio;
-export const current = () => state.queue[state.index] ?? null;
-export const queue = () => state.queue;
-export const index = () => state.index;
-export const isPlaying = () => !audio.paused;
-export const settings = () => ({ shuffle: state.shuffle, repeat: state.repeat });
-
-let scrobbled = false;
-
-function load(i, autoplay = true) {
-  if (i < 0 || i >= state.queue.length) return;
-  state.index = i;
-  const song = state.queue[i];
-  scrobbled = false;
-  audio.src = api.streamUrl(song.id);
-  if (autoplay) audio.play().catch(() => {});
-  api.scrobble(song.id, false).catch(() => {}); // "läuft gerade"
-  updateMediaSession(song);
-  emit('track');
-}
-
-function shuffled(arr) {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
+    if ('mediaSession' in navigator) {
+      const ms = navigator.mediaSession;
+      ms.setActionHandler('play', () => this.play());
+      ms.setActionHandler('pause', () => this.pause());
+      ms.setActionHandler('previoustrack', () => this.prev());
+      ms.setActionHandler('nexttrack', () => this.next());
+      try { ms.setActionHandler('seekto', (e) => this.seekTo(e.seekTime)); } catch { /* ältere Browser */ }
+    }
   }
-  return a;
-}
 
-export function playList(songs, start = 0) {
-  if (!songs.length) return;
-  if (state.shuffle) {
-    const first = songs[start];
-    state.queue = [first, ...shuffled(songs.filter((_, i) => i !== start))];
-    start = 0;
-  } else {
-    state.queue = songs.slice();
+  get current() { return this.pos >= 0 ? this.queue[this.order[this.pos]] : null; }
+  get playing() { return this.engine === 'spotify' ? !this.sp.paused : !this.audio.paused; }
+
+  time() {
+    if (this.engine === 'spotify') return { pos: this.sp.pos, dur: this.sp.dur || this.current?.duration || 0 };
+    return { pos: this.audio.currentTime || 0, dur: this.audio.duration || this.current?.duration || 0 };
   }
-  load(start);
-  emit('queue');
-}
 
-export function enqueue(songs) {
-  const wasEmpty = state.queue.length === 0;
-  state.queue.push(...songs);
-  emit('queue');
-  if (wasEmpty) load(0);
-}
-
-export function playNext(songs) {
-  if (state.queue.length === 0) return playList(songs);
-  state.queue.splice(state.index + 1, 0, ...songs);
-  emit('queue');
-}
-
-export function jump(i) { load(i); }
-
-export function removeAt(i) {
-  if (i === state.index) return;
-  state.queue.splice(i, 1);
-  if (i < state.index) state.index--;
-  emit('queue');
-}
-
-export function clearQueue() {
-  const cur = current();
-  state.queue = cur ? [cur] : [];
-  state.index = cur ? 0 : -1;
-  emit('queue');
-}
-
-export function toggle() {
-  if (!current()) return;
-  if (audio.paused) audio.play().catch(() => {}); else audio.pause();
-}
-
-export function next(auto = false) {
-  if (auto && state.repeat === 'one') { audio.currentTime = 0; audio.play(); return; }
-  if (state.index + 1 < state.queue.length) load(state.index + 1);
-  else if (state.repeat === 'all' && state.queue.length) load(0);
-  else if (auto) { audio.pause(); emit('state'); }
-}
-
-export function prev() {
-  if (audio.currentTime > 3 || state.index <= 0) { audio.currentTime = 0; return; }
-  load(state.index - 1);
-}
-
-export function seek(sec) { if (isFinite(sec)) audio.currentTime = sec; }
-export function setVolume(v) { audio.volume = v; localStorage.setItem('plattenregal.volume', v); }
-
-export function toggleShuffle() {
-  state.shuffle = !state.shuffle;
-  if (state.shuffle && state.queue.length > 1) {
-    const cur = current();
-    const rest = state.queue.filter((_, i) => i !== state.index);
-    state.queue = [cur, ...shuffled(rest)];
-    state.index = 0;
-    emit('queue');
+  /** Lokale Datei: bei einem Fehler einmal neu laden (z. B. Festplatte wacht gerade auf), erst dann melden. */
+  onAudioError() {
+    const t = this.current;
+    if (this.engine !== 'local' || !t || !this.audio.getAttribute('src')) return;
+    if (this.retryFor !== t.id) {
+      this.retryFor = t.id;
+      const at = this.audio.currentTime || 0;
+      const wasPlaying = this.wantPlay;
+      setTimeout(() => {
+        if (this.current !== t) return;
+        this.audio.src = `${api.streamUrl(t.id)}?retry=${Date.now()}`;
+        if (at) this.audio.addEventListener('loadedmetadata', () => { this.audio.currentTime = at; }, { once: true });
+        if (wasPlaying) this.audio.play().catch(() => {});
+      }, 800);
+      return;
+    }
+    this.fail('Diese Datei lässt sich nicht abspielen.');
   }
-  emit('state');
-}
 
-export function cycleRepeat() {
-  state.repeat = { off: 'all', all: 'one', one: 'off' }[state.repeat];
-  emit('state');
-}
-
-audio.addEventListener('ended', () => next(true));
-audio.addEventListener('play', () => emit('state'));
-audio.addEventListener('pause', () => emit('state'));
-audio.addEventListener('timeupdate', () => {
-  emit('time');
-  const song = current();
-  // Als "gehört" zählen, wenn die Hälfte oder 4 Minuten erreicht sind.
-  if (song && !scrobbled && audio.duration && (audio.currentTime > audio.duration / 2 || audio.currentTime > 240)) {
-    scrobbled = true;
-    api.scrobble(song.id, true).catch(() => {});
+  fail(message) {
+    const e = new Event('error');
+    e.message = message;
+    this.dispatchEvent(e);
   }
-});
-audio.addEventListener('error', () => emit('error'));
 
-const savedVol = parseFloat(localStorage.getItem('plattenregal.volume'));
-audio.volume = isFinite(savedVol) ? savedVol : 0.8;
+  /** Neue Warteschlange setzen und ab Titel `start` spielen. Direkt aus einem Klick aufrufen. */
+  playList(tracks, start = 0) {
+    spotify.activate();
+    this.queue = tracks.slice();
+    this.order = this.queue.map((_, i) => i);
+    if (this.shuffle) this.reshuffle(start);
+    this.pos = this.shuffle ? 0 : start;
+    this.load(true);
+  }
 
-function updateMediaSession(song) {
-  if (!('mediaSession' in navigator)) return;
-  navigator.mediaSession.metadata = new MediaMetadata({
-    title: song.title,
-    artist: song.artist,
-    album: song.album,
-    artwork: song.coverArt ? [{ src: new URL(api.coverUrl(song.coverArt, 512), location.href).href, sizes: '512x512' }] : [],
-  });
-}
+  enqueue(tracks, next = false) {
+    const base = this.queue.length;
+    this.queue.push(...tracks);
+    const idx = tracks.map((_, i) => base + i);
+    if (next && this.pos >= 0) this.order.splice(this.pos + 1, 0, ...idx);
+    else this.order.push(...idx);
+    if (this.pos < 0) { this.pos = 0; this.load(true); }
+    this.dispatchEvent(new Event('queue'));
+  }
 
-if ('mediaSession' in navigator) {
-  navigator.mediaSession.setActionHandler('play', () => audio.play());
-  navigator.mediaSession.setActionHandler('pause', () => audio.pause());
-  navigator.mediaSession.setActionHandler('nexttrack', () => next());
-  navigator.mediaSession.setActionHandler('previoustrack', () => prev());
+  jump(orderPos) { spotify.activate(); this.pos = orderPos; this.load(true); }
+
+  reshuffle(keepIndex) {
+    const rest = this.order.filter((i) => i !== keepIndex);
+    for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [rest[i], rest[j]] = [rest[j], rest[i]]; }
+    this.order = keepIndex === undefined || keepIndex < 0 ? rest : [keepIndex, ...rest];
+  }
+
+  toggleShuffle() {
+    this.shuffle = !this.shuffle;
+    const cur = this.pos >= 0 ? this.order[this.pos] : -1;
+    if (this.shuffle) { this.reshuffle(cur); this.pos = cur >= 0 ? 0 : -1; }
+    else { this.order = this.queue.map((_, i) => i); this.pos = cur; }
+    this.dispatchEvent(new Event('queue'));
+  }
+
+  cycleRepeat() {
+    this.repeat = { off: 'all', all: 'one', one: 'off' }[this.repeat];
+    this.dispatchEvent(new Event('queue'));
+  }
+
+  load(autoplay) {
+    const t = this.current;
+    if (!t) return;
+    if (t.source === 'spotify') {
+      this.audio.pause();
+      this.audio.removeAttribute('src');
+      this.engine = 'spotify';
+      this.sp = { pos: 0, dur: t.duration || 0, paused: false };
+      // Bei Spotify Connect die folgenden Spotify-Titel gleich mitgeben (iPhone spielt dann auch gesperrt weiter).
+      const uris = [t.uri];
+      if (spotify.playbackMode() === 'connect' && this.repeat !== 'one') {
+        for (let k = this.pos + 1; k < this.order.length; k++) {
+          const n = this.queue[this.order[k]];
+          if (n.source !== 'spotify') break;
+          uris.push(n.uri);
+        }
+      }
+      spotify.play(uris, this.audio.volume).catch((e) => { this.sp.paused = true; this.fail(e.message); this.dispatchEvent(new Event('state')); });
+      this.startPolling();
+    } else {
+      if (this.engine === 'spotify') spotify.stop();
+      this.stopPolling();
+      this.engine = 'local';
+      this.retryFor = null;
+      this.wantPlay = !!autoplay;
+      this.audio.src = api.streamUrl(t.id);
+      if (autoplay) this.audio.play().catch(() => {});
+    }
+    this.updateMediaSession();
+    this.dispatchEvent(new Event('track'));
+    this.dispatchEvent(new Event('state'));
+  }
+
+  startPolling() {
+    this.stopPolling();
+    this.spTimer = setInterval(() => this.pollSpotify(), spotify.playbackMode() === 'connect' ? 2000 : 1000);
+  }
+  stopPolling() { clearInterval(this.spTimer); this.spTimer = null; }
+
+  async pollSpotify(fromEvent) {
+    if (this.engine !== 'spotify') return;
+    const s = await spotify.position().catch(() => null);
+    if (!s) return;
+    const wasPaused = this.sp.paused;
+    this.sp = { pos: s.pos, dur: s.dur, paused: s.paused };
+    this.dispatchEvent(new Event('time'));
+    if (wasPaused !== s.paused || fromEvent) this.dispatchEvent(new Event('state'));
+  }
+
+  /** Spotify Connect hat selbst zum nächsten Titel unserer Liste gewechselt. */
+  followRemote(uri) {
+    for (let k = this.pos + 1; k < this.order.length; k++) {
+      if (this.queue[this.order[k]].uri === uri) {
+        this.pos = k;
+        this.updateMediaSession();
+        this.dispatchEvent(new Event('track'));
+        return;
+      }
+    }
+  }
+
+  play() {
+    if (!this.current) return;
+    if (this.engine === 'spotify') { this.sp.paused = false; spotify.resume(); this.dispatchEvent(new Event('state')); }
+    else { this.wantPlay = true; this.audio.play().catch(() => {}); }
+  }
+  pause() {
+    if (this.engine === 'spotify') { this.sp.paused = true; spotify.pause(); this.dispatchEvent(new Event('state')); }
+    else { this.wantPlay = false; this.audio.pause(); }
+  }
+  toggle() { this.playing ? this.pause() : this.play(); }
+
+  next() {
+    if (this.pos < this.order.length - 1) { this.pos++; this.load(true); }
+    else if (this.repeat === 'all' && this.order.length) { this.pos = 0; this.load(true); }
+    else { this.pause(); }
+  }
+
+  prev() {
+    if (this.time().pos > 3 || this.pos <= 0) { this.seekTo(0); return; }
+    this.pos--; this.load(true);
+  }
+
+  onEnded() {
+    if (this.repeat === 'one') { this.seekTo(0); if (this.engine === 'spotify') this.load(true); else this.play(); return; }
+    this.next();
+  }
+
+  seekTo(sec) {
+    if (this.engine === 'spotify') { this.sp.pos = sec; spotify.seek(sec); this.dispatchEvent(new Event('time')); }
+    else this.audio.currentTime = sec;
+  }
+  seekBy(delta) { this.seekTo(Math.max(0, this.time().pos + delta)); }
+  seekFraction(f) { const d = this.time().dur; if (d) this.seekTo(f * d); }
+  setVolume(v) { this.audio.volume = v; spotify.setVolume(v); store.set('volume', v); }
+
+  upcoming() { return this.order.slice(this.pos).map((qi, k) => ({ track: this.queue[qi], orderPos: this.pos + k })); }
+
+  updateMediaSession() {
+    const t = this.current;
+    if (!t || !('mediaSession' in navigator)) return;
+    const artwork = t.image
+      ? [{ src: t.imageLarge || t.image, sizes: '640x640', type: 'image/jpeg' }]
+      : t.album_id ? [300, 600].map((s) => ({ src: `/api/cover/${t.album_id}?s=${s}`, sizes: `${s}x${s}`, type: 'image/jpeg' })) : [];
+    navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: t.artist, album: t.album || '', artwork });
+  }
 }

@@ -1,0 +1,10 @@
+# Sichere Adresse auch im Heimnetz (für Macs mit NordVPN o. ä., wo Tailscale nicht geht).
+# Caddy holt das Zertifikat für die *.ts.net-Adresse vom Tailscale-Dienst des Servers
+# und erneuert es selbst.
+{
+	auto_https disable_redirects
+}
+
+{$TS_HOST} {
+	reverse_proxy bulldogbeats:8080
+}
